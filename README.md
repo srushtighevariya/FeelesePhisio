@@ -1,70 +1,183 @@
-# Recovery Path — Clinic Management UI
+# 🏥 FeelEase Physio — Clinic Management System
 
-A fully interactive React frontend for the Recovery Path physiotherapy clinic system.
-All data lives in React state (in-memory, seeded with sample data) — there's no backend
-in this project, so everything resets on page refresh. This is the click-through UI;
-see the separate `recovery-path-fullstack` project for the real Express + SQLite backend.
+A full-stack physiotherapy clinic management web application built with **Next.js 14** and **Supabase**. Designed for real clinic operations with role-based access for Admins and Therapists.
 
-## Structure
+---
+
+## 🚀 Tech Stack
+
+| Layer        | Technology                          |
+|-------------|--------------------------------------|
+| Framework   | Next.js 14 (App Router, TypeScript)  |
+| Database    | Supabase (PostgreSQL)                |
+| Auth        | Supabase Auth                        |
+| Styling     | Tailwind CSS + Radix UI              |
+| Charts      | Recharts                             |
+| Icons       | Lucide React                         |
+| Realtime    | Supabase Realtime (notifications)    |
+
+---
+
+## ✨ Features
+
+### 🔐 Authentication & Role-Based Access
+- Secure login via Supabase Auth
+- Two roles: **Admin** and **Therapist**
+- Therapists only see their own data (patients, appointments, reports, attendance)
+- Admins have full clinic-wide access
+- Sign-out confirmation dialog
+
+### 👥 Patient Management
+- Add, view, and manage patient profiles
+- Medical history, diagnoses, allergies, emergency contacts
+- Session history tied to completed appointments
+- Pain level tracking before/after sessions
+
+### 📅 Appointments
+- Book appointments with date, time, and session type
+- **Auto-missed** — appointments past their scheduled time are automatically marked as Missed
+- **Reschedule** missed appointments with a new date/time
+- Complete appointments and record session notes + pain levels
+- Therapist is auto-detected from login (no manual selection needed)
+
+### 📆 Calendar View
+- Weekly calendar of all scheduled appointments
+- Color-coded by status (Scheduled, Completed, Missed, Cancelled)
+
+### 🗂️ Attendance
+- Daily attendance logging (Present / Absent / Leave / Half Day)
+- **Weekly** attendance summary with hours worked
+- Admin sees all therapists; therapists only see their own logs (view-only)
+
+### 📊 Reports
+- Auto-generated session reports per patient
+- Therapist feedback recorded at session completion
+- Admin sees all; therapist sees only their own patients' reports
+
+### 🔔 Notifications
+- **Admin**: Full notification log + WhatsApp/SMS dispatch to patients
+- **Therapist**: Personal notification inbox with real-time updates
+- Appointment booked alerts auto-sent to the assigned therapist
+- Unread badge on bell icon, mark-as-read support
+
+### 🏃 Exercise Library
+- Manage physiotherapy exercises with descriptions and categories
+
+### ⚙️ Settings (Admin Only)
+- Clinic info and configuration
+
+---
+
+## 🗂️ Project Structure
 
 ```
-recovery-path-ui/
-  index.html
-  package.json
-  vite.config.js
-  tailwind.config.js
-  postcss.config.js
-  src/
-    main.jsx      entry point
-    App.jsx        the entire app (components, mock data, state, all pages)
-    index.css      Tailwind directives
+app/
+  dashboard/
+    appointments/     Appointment list, new, calendar
+    attendance/       Attendance logs
+    calendar/         Weekly calendar view
+    exercises/        Exercise library
+    notifications/    Admin dispatch + therapist inbox
+    patients/         Patient list, new, profile
+    reports/          Session reports
+    settings/         Clinic settings
+    therapists/       Therapist management (admin only)
+components/
+  appointments/       Appointment UI components
+  attendance/         Attendance table & summary
+  layout/             Sidebar, TopBar
+  notifications/      Admin + Therapist notification clients
+  patients/           Patient forms and profile tabs
+  reports/            Report viewer
+lib/
+  actions/            Server actions (appointments, patients, notifications, etc.)
+  supabase/           Supabase client & server helpers
+supabase/
+  migrations/         Database migration files
 ```
 
-## Setup
+---
 
+## ⚙️ Setup & Installation
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/srushtighevariya/FeelesePhisio.git
+cd FeelesePhisio
+```
+
+### 2. Install dependencies
 ```bash
 npm install
+```
+
+### 3. Configure environment variables
+Create a `.env.local` file in the root:
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+DATABASE_URL=your_postgres_connection_string
+```
+
+> ⚠️ Never commit `.env.local` to GitHub — it contains sensitive keys.
+
+### 4. Run the development server
+```bash
 npm run dev
 ```
 
-Then open the URL Vite prints (usually http://localhost:5173).
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-## What's inside
+---
 
-- Real client-side routing (`react-router-dom`): `/login`, `/dashboard`, `/doctors`,
-  `/patients`, `/patients/:id`, `/appointments`, `/library`, `/reports`, `/reports/:id`,
-  `/settings` — the URL updates as you navigate, the browser back/forward buttons work,
-  and admin-only routes (`/doctors`, `/settings`) redirect a therapist to `/dashboard`
-  instead of just hiding the nav link.
-- Login (role toggle: Admin / Therapist — no real password check, it's a demo)
-- Admin dashboard — clinic-wide stats, "Doctors & Their Patients" panel with expandable
-  patient lists, today's appointments across all doctors
-- Therapist dashboard — scoped to just that doctor's own patients/appointments
-- Doctors (admin only) — list + Add Doctor
-- Patients — list + search + Add Patient, click through to a full profile
-- Patient Profile — Overview / Assessment / Treatment Plan / Sessions / Progress tabs;
-  Add/Edit Assessment, Create/Edit Treatment Plan, and Add Session are all live forms
-- Appointments — Schedule / Complete / Cancel (with confirmation)
-- Exercise Library — add exercises
-- Reports — generates a text report per patient
-- Settings (admin only) — clinic info, toggles, role permissions table
+## 🏗️ Build for Production
 
-## Notes
+```bash
+npm run build
+npm start
+```
 
-- Everything is one file (`src/App.jsx`) by design, since it started life as a single
-  self-contained artifact. It's organized top-to-bottom: theme constants → shared UI
-  components (Card, Btn, Modal, etc.) → mock data → page components → the root `App`.
-  Feel free to split it into multiple files under `src/components/` and `src/pages/`
-  once you're building on top of it — nothing here depends on it staying one file.
-- To connect this to the real backend instead of in-memory mock data, see the
-  `recovery-path-fullstack` project — it has the same pages already wired to `fetch`/`axios`
-  calls against an Express API.
+---
 
-## Instant preview (no install required)
+## 👤 Default Roles
 
-`preview.html` in this folder is a self-contained version of the same app — just
-**double-click it to open in your browser**. No `npm install`, no terminal. It loads
-React/Tailwind/Babel from a CDN (so it needs an internet connection) and transpiles the
-JSX right in the browser. It's for looking at the UI quickly; for real development, use
-the `npm install && npm run dev` setup above instead — that's the one that reflects
-`src/App.jsx` exactly and rebuilds instantly as you edit.
+| Role      | Access                                                      |
+|-----------|-------------------------------------------------------------|
+| Admin     | Full access — all patients, therapists, reports, settings   |
+| Therapist | Scoped access — own patients, appointments, attendance only |
+
+---
+
+## 📋 Key Business Rules
+
+- A therapist logged in can only see **their own** patients, appointments, and reports
+- Appointments are **auto-marked as Missed** if the scheduled time has passed
+- Session notes and pain levels can only be recorded when **completing** a session
+- Attendance time is only shown when status is **Present** or **Half Day**
+- Notifications reach therapists **in real-time** via Supabase Realtime
+
+---
+
+## 📦 Dependencies
+
+- `next` — App framework
+- `@supabase/supabase-js` + `@supabase/ssr` — Database & auth
+- `tailwindcss` — Styling
+- `@radix-ui/*` — Accessible UI primitives
+- `lucide-react` — Icons
+- `recharts` — Charts & analytics
+- `date-fns` — Date utilities
+
+---
+
+## 🛡️ Security
+
+- Server-side auth guards on all dashboard routes
+- Role checked on every server action
+- `.env.local` excluded from version control
+- Supabase Row Level Security (RLS) enabled
+
+---
+
+*Built for FeelEase Physio Clinic — Client Project*
