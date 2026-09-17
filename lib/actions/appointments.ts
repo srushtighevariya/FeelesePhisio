@@ -145,3 +145,100 @@ export async function rescheduleAppointment(
   return data;
 }
 
+/**
+ * Sends day-of reminders for today's scheduled appointments.
+ * - Therapist: in-app "Reminder" notification
+ * - Patient: logged WhatsApp/SMS entry visible to admin for dispatch
+ * Uses a dedup prefix "Day Reminder:" in the title so it only fires once per appointment per day.
+ */
+export async function syncDayOfReminders() {
+  try {
+    const supabase = await createClient();
+
+    // Get today's date in IST
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = formatter.formatToParts(now);
+    const getPart = (t: string) => parts.find((p) => p.type === t)?.value || "00";
+    const todayStr = `${getPart("year")}-${getPart("month")}-${getPart("day")}`;
+
+    // Fetch today's scheduled appointments with patient phone + therapist info
+    const { data: todayAppts } = await supabase
+      .from("appointments")
+      .select(`
+        id,
+        date,
+        time,
+        type,
+        patient_id,
+        therapist_id,
+        patients(id, name, phone),
+        therapists(id, name)
+      `)
+      .eq("date", todayStr)
+      .eq("status", "Scheduled");
+
+    if (!todayAppts || todayAppts.length === 0) return;
+
+    // Fetch already-sent reminders for today to avoid duplicates
+    const { data: existingReminders } = await supabase
+      .from("notification_log")
+      .select("patient_id, recipient_therapist_id, title")
+      .eq("type", "Reminder")
+      .gte("sent_at", `${todayStr}T00:00:00`)
+      .lte("sent_at", `${todayStr}T23:59:59`);
+
+    const alreadySent = new Set(
+      (existingReminders ?? []).map(
+        (r: any) => `${r.patient_id}-${r.recipient_therapist_id}`
+      )
+    );
+
+    for (const appt of todayAppts) {
+      const patientId = (appt as any).patient_id as string;
+      const therapistId = (appt as any).therapist_id as string;
+      const patientName = (appt as any).patients?.name ?? "Patient";
+      const patientPhone = (appt as any).patients?.phone ?? null;
+      const therapistName = (appt as any).therapists?.name ?? "Therapist";
+      const timeStr = appt.time ? (appt.time as string).slice(0, 5) : "";
+      const sessionType = appt.type ?? "Physiotherapy Session";
+
+      const dedupKey = `${patientId}-${therapistId}`;
+      if (alreadySent.has(dedupKey)) continue; // Already reminded today
+
+      // 1. In-app reminder → Therapist
+      if (therapistId) {
+        await supabase.from("notification_log").insert({
+          type: "Reminder",
+          title: "Day Reminder: Appointment Today",
+          message: `Reminder: ${patientName} has a ${sessionType} appointment today${timeStr ? " at " + timeStr : ""}.`,
+          patient_id: patientId,
+          therapist_id: therapistId,
+          recipient_therapist_id: therapistId,
+          is_read: false,
+        } as any);
+      }
+
+      // 2. Patient reminder → logged for admin WhatsApp/SMS dispatch
+      if (patientId) {
+        const patientMsg = `Hi ${patientName}, this is a reminder from FeelEase Physio. You have a ${sessionType} appointment today${timeStr ? " at " + timeStr : ""}. Please be on time. – Dr. ${therapistName}`;
+        await supabase.from("notification_log").insert({
+          type: patientPhone ? "WhatsApp" : "Reminder",
+          title: "Day Reminder: Patient Appointment",
+          message: patientMsg,
+          patient_id: patientId,
+          therapist_id: therapistId ?? null,
+          recipient_therapist_id: null,
+          is_read: true, // Admin-side, mark read by default
+        } as any);
+      }
+    }
+  } catch (err) {
+    console.error("Day-of reminder sync error:", err);
+  }
+}

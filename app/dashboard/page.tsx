@@ -1,13 +1,20 @@
 import { createClient } from "@/lib/supabase/server";
 import { format } from "date-fns";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
+import { syncAutoMissedAppointments, syncDayOfReminders } from "@/lib/actions/appointments";
 import type { Metadata } from "next";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Clinic Dashboard",
 };
 
 export default async function DashboardPage() {
+  // Run background syncs — non-blocking
+  void syncAutoMissedAppointments();
+  void syncDayOfReminders();
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
