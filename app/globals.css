@@ -1,0 +1,192 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   Global CSS — Physiotherapy Clinic Dashboard Design System
+   ============================================================ */
+
+:root {
+  --background: #EDE9E1;
+  --foreground: #1A1A1A;
+  --font-inter: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ─── Base ──────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #EDE9E1;
+  color: #1A1A1A;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D4CFC6; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #B8B2A6; }
+
+/* ─── Custom Utilities ──────────────────────────────────── */
+@layer utilities {
+  .rounded-card { border-radius: 28px; }
+  .rounded-cardLg { border-radius: 32px; }
+  .rounded-pill { border-radius: 9999px; }
+}
+
+/* ─── Typography helpers ────────────────────────────────── */
+@layer components {
+  .heading-xl { @apply text-3xl font-bold tracking-tight text-[#1A1A1A]; }
+  .heading-lg { @apply text-2xl font-semibold tracking-tight text-[#1A1A1A]; }
+  .heading-md { @apply text-xl font-semibold text-[#1A1A1A]; }
+  .heading-sm { @apply text-base font-semibold text-[#1A1A1A]; }
+  .body-base  { @apply text-sm text-[#4B4B4B] leading-relaxed; }
+  .body-sm    { @apply text-xs text-[#9B9B9B] leading-relaxed; }
+  .label      { @apply text-xs font-medium text-[#9B9B9B] uppercase tracking-widest; }
+
+  /* ─── Cards ─────────────────────────────────────────────── */
+  .card-base {
+    @apply bg-[#DDD5C7] rounded-[28px] shadow-card border border-[#D4CFC6];
+  }
+  .card-white {
+    @apply bg-white rounded-[28px] shadow-card border border-[#E8E4DB];
+  }
+  .card-dark {
+    @apply bg-[#16181D] rounded-[28px] shadow-panel;
+  }
+
+  /* ─── Buttons ────────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+           bg-[#F2924A] text-white font-semibold text-sm
+           px-5 py-2.5 rounded-full
+           hover:bg-[#E07A35] active:scale-[0.98]
+           transition-all duration-150 shadow-sm cursor-pointer;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+           bg-[#DDD5C7] text-[#1A1A1A] font-medium text-sm
+           px-5 py-2.5 rounded-full border border-[#C8C2B8]
+           hover:bg-[#CFC8BA] active:scale-[0.98]
+           transition-all duration-150 cursor-pointer;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2
+           text-[#4B4B4B] font-medium text-sm
+           px-4 py-2 rounded-full
+           hover:bg-[#DDD5C7] active:scale-[0.98]
+           transition-all duration-150 cursor-pointer;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2
+           bg-red-500 text-white font-semibold text-sm
+           px-5 py-2.5 rounded-full
+           hover:bg-red-600 active:scale-[0.98]
+           transition-all duration-150 cursor-pointer;
+  }
+
+  /* ─── Status badges ─────────────────────────────────────── */
+  .badge-completed {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-green-100 text-green-700;
+  }
+  .badge-scheduled {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-yellow-100 text-yellow-700;
+  }
+  .badge-cancelled {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-red-100 text-red-600;
+  }
+  .badge-missed {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-gray-100 text-gray-500;
+  }
+  .badge-active {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-blue-100 text-blue-700;
+  }
+  .badge-paused {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
+           bg-orange-100 text-orange-600;
+  }
+
+  /* ─── Form inputs ────────────────────────────────────────── */
+  .input-base {
+    @apply w-full rounded-xl border border-[#D4CFC6] bg-white
+           px-3.5 py-2.5 text-sm text-[#1A1A1A] placeholder:text-[#9B9B9B]
+           focus:outline-none focus:ring-2 focus:ring-[#F2924A]/30 focus:border-[#F2924A]
+           transition-colors duration-150;
+  }
+
+  /* ─── Sidebar nav item ──────────────────────────────────── */
+  .nav-item {
+    @apply flex items-center gap-3 px-3.5 py-2.5 rounded-full
+           text-sm font-medium text-[#9B9B9B]
+           hover:bg-white/10 hover:text-white
+           transition-all duration-150 cursor-pointer;
+  }
+  .nav-item-active {
+    @apply bg-white/15 text-white;
+  }
+
+  /* ─── Table ─────────────────────────────────────────────── */
+  .table-base {
+    @apply w-full text-sm border-collapse;
+  }
+  .table-base th {
+    @apply px-4 py-3 text-left text-xs font-medium text-[#9B9B9B] uppercase tracking-wider
+           border-b border-[#D4CFC6];
+  }
+  .table-base td {
+    @apply px-4 py-3.5 text-[#4B4B4B] border-b border-[#E8E4DB]/50;
+  }
+  .table-base tr:last-child td {
+    @apply border-b-0;
+  }
+  .table-base tbody tr {
+    @apply hover:bg-[#EDE9E1]/60 transition-colors;
+  }
+
+  /* ─── Section header ────────────────────────────────────── */
+  .section-header {
+    @apply flex items-center justify-between mb-5;
+  }
+
+  /* ─── Skeleton ──────────────────────────────────────────── */
+  .skeleton {
+    @apply bg-[#D4CFC6] animate-pulse rounded-lg;
+  }
+}
+
+/* ─── Animations ────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out both;
+}
+
+/* ─── Print styles for reports ──────────────────────────── */
+@media print {
+  .no-print { display: none !important; }
+  body { background: white !important; }
+  .card-base, .card-white { border: 1px solid #ccc !important; box-shadow: none !important; }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
+}

@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Routes, Route, Navigate, Outlet, NavLink, useNavigate, useParams,
 } from "react-router-dom";
+import { api, saveToken, saveUser, loadUser, clearToken } from "./api.js";
 import {
   LayoutDashboard, Stethoscope, Users, CalendarDays, Dumbbell,
   FileText, Settings as SettingsIcon, Search, Bell, Printer,
   Check, X, RotateCcw, ChevronDown, Plus, LogOut, ArrowLeft,
-  Activity, TrendingUp, HeartPulse, ShieldCheck, Sparkles, Clock, AlertCircle
+  Activity, TrendingUp, HeartPulse, ShieldCheck, Sparkles, Clock, AlertCircle,
+  ClipboardCheck, MessageSquare, Send, Smartphone, UserCheck,
 } from "lucide-react";
 
 /* ============ MODERN COLOR SYSTEM ============ */
@@ -325,6 +327,8 @@ const NAV = [
   { key: "appointments", label: "Appointments", icon: CalendarDays, adminOnly: false },
   { key: "library", label: "Exercise Library", icon: Dumbbell, adminOnly: false },
   { key: "reports", label: "Reports", icon: FileText, adminOnly: false, section: "Insights" },
+  { key: "attendance", label: "Attendance", icon: ClipboardCheck, adminOnly: false, section: "Operations" },
+  { key: "notifications", label: "Notifications", icon: MessageSquare, adminOnly: true },
   { key: "settings", label: "Settings", icon: SettingsIcon, adminOnly: true },
 ];
 
@@ -339,22 +343,33 @@ function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    const match = DEMO_ACCOUNTS.find((a) => a.username === username.trim() && a.password === password);
-    if (!match) {
-      setError("Invalid credentials. You can click a quick demo account below.");
-      return;
-    }
     setError("");
-    onLogin(match);
+    setSubmitting(true);
+    try {
+      await onLogin({ username: username.trim(), password });
+    } catch (err) {
+      setError(err.message || "Invalid credentials.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
-  function quickLogin(acc) {
+  async function quickLogin(acc) {
     setUsername(acc.username);
     setPassword(acc.password);
-    onLogin(acc);
+    setError("");
+    setSubmitting(true);
+    try {
+      await onLogin({ username: acc.username, password: acc.password });
+    } catch (err) {
+      setError(err.message || "Login failed.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -386,8 +401,8 @@ function LoginScreen({ onLogin }) {
           <Field label="Password">
             <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
           </Field>
-          <Btn type="submit" variant="primary" className="w-full py-3 text-sm">
-            Sign In to Clinical Portal
+          <Btn type="submit" variant="primary" className="w-full py-3 text-sm" disabled={submitting}>
+            {submitting ? "Signing in…" : "Sign In to Clinical Portal"}
           </Btn>
         </form>
 
@@ -398,19 +413,22 @@ function LoginScreen({ onLogin }) {
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={() => quickLogin(DEMO_ACCOUNTS[0])}
-              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/60 transition-colors"
+              disabled={submitting}
+              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/60 transition-colors disabled:opacity-50"
             >
               👑 Admin
             </button>
             <button
               onClick={() => quickLogin(DEMO_ACCOUNTS[1])}
-              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200/60 transition-colors"
+              disabled={submitting}
+              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200/60 transition-colors disabled:opacity-50"
             >
               🩺 Dr. Sara
             </button>
             <button
               onClick={() => quickLogin(DEMO_ACCOUNTS[2])}
-              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60 transition-colors"
+              disabled={submitting}
+              className="px-2.5 py-2 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60 transition-colors disabled:opacity-50"
             >
               🩺 Dr. Ali
             </button>
@@ -2023,133 +2041,317 @@ function LibraryPage({ exercises, addExercise }) {
   );
 }
 
-/* ============ REPORTS PAGE ============ */
-function ReportsPage({ role, patients, doctors }) {
-  const isAdmin = role === "admin";
-  const { id: routeId } = useParams();
-  const navigate = useNavigate();
-  const [selectedId, setSelectedId] = useState(routeId || (patients[0]?.id || ""));
+/* ============ REPORTS PAGE — Monthly Doctor Report ============ */
+function ReportsPage({ role, doctors, appts, attendance }) {
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const [selectedDoctorId, setSelectedDoctorId] = useState("");
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (routeId) setSelectedId(routeId);
-  }, [routeId]);
+    if (doctors.length > 0 && !selectedDoctorId) setSelectedDoctorId(String(doctors[0].id));
+  }, [doctors]);
 
-  function handleSelect(newId) {
-    setSelectedId(newId);
-    navigate(newId ? `/reports/${newId}` : "/reports", { replace: true });
+  const reportKey = `rp_report_${selectedDoctorId}_${selectedMonth}`;
+  const emptyManual = {
+    clinicalLearning: "",
+    googleReviews: [{ name: "", date: "" }, { name: "", date: "" }],
+    videoPatients: [{ name: "", date: "" }, { name: "", date: "" }],
+    extraordinaryWork: "",
+    successStories: [{ name: "", caseNo: "" }, { name: "", caseNo: "" }, { name: "", caseNo: "" }],
+    remark: "",
+  };
+
+  const [manual, setManual] = useState(emptyManual);
+
+  useEffect(() => {
+    if (!selectedDoctorId || !selectedMonth) return;
+    try {
+      const stored = localStorage.getItem(reportKey);
+      setManual(stored ? JSON.parse(stored) : emptyManual);
+    } catch { setManual(emptyManual); }
+  }, [selectedDoctorId, selectedMonth]);
+
+  // Auto-calculated from attendance records
+  const monthAttendance = (attendance || []).filter(
+    a => a.doctorId === Number(selectedDoctorId) && a.date.startsWith(selectedMonth)
+  );
+  const workingDays = monthAttendance.filter(a => a.status === "Present" || a.status === "Half Day").length;
+  const workingHours = parseFloat(monthAttendance.reduce((s, a) => s + (a.hoursWorked || 0), 0).toFixed(1));
+
+  // F/U = completed appointments in the month for that doctor
+  const monthAppts = (appts || []).filter(
+    a => a.doctorId === Number(selectedDoctorId) && a.date.startsWith(selectedMonth) && a.status === "Completed"
+  );
+  const noOfFU = monthAppts.length;
+  const avgPTsPerDay = workingDays > 0 ? (noOfFU / workingDays).toFixed(1) : "—";
+  const avgPTsPerHrs = workingHours > 0 ? (noOfFU / workingHours).toFixed(1) : "—";
+
+  const selectedDoctor = doctors.find(d => d.id === Number(selectedDoctorId));
+  const monthLabel = selectedMonth
+    ? new Date(selectedMonth + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })
+    : "";
+
+  function saveReport() {
+    localStorage.setItem(reportKey, JSON.stringify(manual));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
-  const patient = patients.find((p) => p.id === Number(selectedId));
-  const doctor = patient && doctors.find((d) => d.id === patient.doctorId);
+  function updGoogleReview(idx, field, val) {
+    const arr = manual.googleReviews.map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    setManual({ ...manual, googleReviews: arr });
+  }
+  function updVideoPatient(idx, field, val) {
+    const arr = manual.videoPatients.map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    setManual({ ...manual, videoPatients: arr });
+  }
+  function updSuccessStory(idx, field, val) {
+    const arr = manual.successStories.map((r, i) => i === idx ? { ...r, [field]: val } : r);
+    setManual({ ...manual, successStories: arr });
+  }
+
+  const inlineInput = "w-full h-full px-3 py-2.5 text-xs text-slate-800 bg-transparent focus:outline-none focus:bg-teal-50/30 placeholder-slate-300 transition-colors";
+  const sectionHeader = "p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between";
+  const gridRow = (i, total) => `grid grid-cols-12 ${i < total - 1 ? "border-b border-slate-100" : ""}`;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Clinical Documentation</div>
-          <h1 className="text-2xl font-display font-bold text-slate-900">
-            {isAdmin ? "Clinic Treatment Reports" : "My Patient Reports"}
-          </h1>
+          <h1 className="text-2xl font-display font-bold text-slate-900">Monthly Staff Report</h1>
         </div>
-        {patient && (
-          <Btn variant="primary" onClick={() => window.print()}>
-            <Printer size={16} /> Print / Export Official PDF
+        <div className="flex items-center gap-3">
+          <Btn variant="default" onClick={saveReport}>
+            {saved ? <><Check size={14} /> Saved!</> : "Save Draft"}
           </Btn>
-        )}
+          <Btn variant="primary" onClick={() => window.print()}>
+            <Printer size={15} /> Print Report
+          </Btn>
+        </div>
       </div>
 
+      {/* Selectors */}
       <Card>
-        <Field label="Select Patient for Formal Clinical Report">
-          <Select value={selectedId || ""} onChange={(e) => handleSelect(e.target.value)}>
-            <option value="">Choose a patient from records…</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.code}) — {p.assessment?.diagnosis || p.status}
-              </option>
-            ))}
-          </Select>
-        </Field>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Select Physiotherapist">
+            <Select value={selectedDoctorId} onChange={e => setSelectedDoctorId(e.target.value)}>
+              <option value="">Choose Doctor…</option>
+              {doctors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </Select>
+          </Field>
+          <Field label="Month / Year">
+            <Input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+          </Field>
+        </div>
+        {workingDays === 0 && selectedDoctorId && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-semibold flex items-center gap-2">
+            <AlertCircle size={14} />
+            No attendance records found for this month. Go to <b>Attendance</b> to mark daily records — stats will auto-fill here.
+          </div>
+        )}
       </Card>
 
-      {patient ? (
-        <div className="bg-white rounded-3xl p-8 sm:p-10 border border-slate-200 shadow-xl space-y-6 print:m-0 print:border-none print:shadow-none">
-          <div className="flex justify-between items-start border-b-2 border-slate-900 pb-6">
-            <div>
-              <div className="text-2xl font-display font-bold text-slate-900">SUNRISE PHYSIOTHERAPY CLINIC</div>
-              <div className="text-xs text-slate-500 font-medium mt-0.5">Comprehensive Musculoskeletal & Rehabilitation Report</div>
-              <div className="text-xs text-slate-400 mt-1">Surat, Gujarat · Contact: +91 261 400 1122</div>
-            </div>
-            <div className="text-right">
-              <span className="inline-block px-3 py-1 bg-teal-50 text-teal-800 border border-teal-200 rounded-full text-xs font-bold">
-                OFFICIAL MEDICAL RECORD
-              </span>
-              <div className="text-xs text-slate-400 font-mono mt-1">Date: {today}</div>
-            </div>
+      {selectedDoctorId && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden print:shadow-none print:border">
+
+          {/* Report Header */}
+          <div className="bg-slate-900 text-white text-center py-5 px-6">
+            <div className="text-xl font-display font-bold tracking-widest uppercase">feel ease PHYSIOTHERAPY</div>
+            <div className="text-base font-bold mt-1.5 tracking-[0.2em] uppercase text-slate-300">Monthly Report</div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200/80 text-xs">
-            <div>
-              <span className="text-slate-400 font-bold uppercase block">Patient Name</span>
-              <span className="font-bold text-slate-900 text-sm">{patient.name}</span>
-            </div>
-            <div>
-              <span className="text-slate-400 font-bold uppercase block">Patient ID</span>
-              <span className="font-bold text-slate-900 font-mono text-sm">{patient.code}</span>
-            </div>
-            <div>
-              <span className="text-slate-400 font-bold uppercase block">Attending Doctor</span>
-              <span className="font-bold text-slate-900 text-sm">{doctor?.name || "—"}</span>
-            </div>
-            <div>
-              <span className="text-slate-400 font-bold uppercase block">Registration Date</span>
-              <span className="font-bold text-slate-900 font-mono text-sm">{patient.registrationDate}</span>
-            </div>
-          </div>
+          <div className="p-6 sm:p-8 space-y-5">
 
-          <div className="space-y-3">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Clinical Diagnosis & Findings</h3>
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-2">
-              <div><b className="text-slate-800">Primary Diagnosis:</b> <span className="text-teal-800 font-bold">{patient.assessment?.diagnosis || "Non-specific"}</span></div>
-              <div><b className="text-slate-800">Target Region:</b> {patient.assessment?.bodyPart || "—"}</div>
-              <div><b className="text-slate-800">Range of Motion:</b> {patient.assessment?.rangeOfMotion || "—"}</div>
-              <div><b className="text-slate-800">Muscle Strength Score:</b> {patient.assessment?.muscleStrength || "—"}</div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Rehabilitation Milestones</h3>
-            <div className="grid grid-cols-3 gap-4 text-center text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-slate-400 font-bold uppercase block">Sessions Completed</span>
-                <span className="font-bold text-base text-slate-800">{patient.sessions.length} of {patient.treatment?.plannedSessions || 10}</span>
+            {/* Top Metadata Grid */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className="grid grid-cols-3 border-b border-slate-300">
+                <div className="p-4 border-r border-slate-300">
+                  <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1.5">Month / Year</div>
+                  <div className="font-bold text-slate-900">{monthLabel}</div>
+                </div>
+                <div className="p-4 border-r border-slate-300">
+                  <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1.5">Name of Dr. :-</div>
+                  <div className="font-bold text-slate-900">{selectedDoctor?.name || "—"}</div>
+                </div>
+                <div className="p-4">
+                  <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mb-1.5">Sign :-</div>
+                  <div className="text-slate-200 italic text-sm">______________</div>
+                </div>
               </div>
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-slate-400 font-bold uppercase block">Baseline Pain</span>
-                <span className="font-bold text-base text-rose-600">{patient.sessions[0]?.painBefore ?? patient.assessment?.painLevel ?? "—"}/10</span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-slate-400 font-bold uppercase block">Current Pain Score</span>
-                <span className="font-bold text-base text-emerald-600">{patient.sessions[patient.sessions.length - 1]?.painAfter ?? "—"}/10</span>
-              </div>
-            </div>
-          </div>
 
-          <div className="pt-8 border-t border-slate-200 flex justify-between items-end text-xs">
-            <div>
-              <div className="text-slate-400">Status: <b className="text-slate-800">{patient.status}</b></div>
-              <div className="text-slate-400 mt-0.5">Report generated by Recovery Path Clinical Engine</div>
+              {/* Auto-filled stats */}
+              {[
+                { label: "Working Day", value: workingDays || "—", hint: workingDays === 0 },
+                { label: "Working Hours", value: workingHours > 0 ? `${workingHours} hrs` : "—", hint: workingHours === 0 },
+                { label: "No. of F/U", value: noOfFU || "—", hint: false },
+                { label: "Average PTs / Day", value: avgPTsPerDay, hint: false },
+                { label: "Average PTs / Hrs", value: avgPTsPerHrs, hint: false },
+              ].map((row, i, arr) => (
+                <div key={i} className={`grid grid-cols-2 ${i < arr.length - 1 ? "border-b border-slate-200" : ""}`}>
+                  <div className="p-3.5 border-r border-slate-300 bg-slate-50">
+                    <span className="text-xs font-bold text-slate-700">{row.label}</span>
+                  </div>
+                  <div className="p-3.5 flex items-center gap-2">
+                    <span className={`font-bold text-sm ${row.value === "—" ? "text-slate-300" : "text-slate-900"}`}>{row.value}</span>
+                    {row.hint && (
+                      <span className="text-[10px] text-amber-500 font-semibold italic">← mark attendance to fill</span>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div className="text-right">
-              <div className="w-40 border-b border-slate-400 pb-1 mb-1" />
-              <div className="font-bold text-slate-800">{doctor?.name || "Attending Physiotherapist"}</div>
-              <div className="text-slate-400 text-[11px]">Authorized Signatory</div>
+
+            {/* Clinical Learning */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className={sectionHeader}>
+                <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Clinical Learning :-</span>
+              </div>
+              <div className="p-3 min-h-[90px]">
+                <textarea
+                  value={manual.clinicalLearning}
+                  onChange={e => setManual({ ...manual, clinicalLearning: e.target.value })}
+                  placeholder="Document new skills, techniques, or clinical insights gained this month..."
+                  className="w-full text-xs text-slate-800 bg-transparent resize-none focus:outline-none min-h-[80px] placeholder-slate-300 leading-relaxed"
+                />
+              </div>
             </div>
+
+            {/* Google Reviews */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className="grid grid-cols-12 border-b border-slate-300 bg-slate-50">
+                <div className="col-span-4 p-3 border-r border-slate-300">
+                  <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Google Reviews :-</span>
+                </div>
+                <div className="col-span-5 p-3 border-r border-slate-300 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Name</span>
+                </div>
+                <div className="col-span-3 p-3 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Date</span>
+                </div>
+              </div>
+              {manual.googleReviews.map((row, idx) => (
+                <div key={idx} className={gridRow(idx, manual.googleReviews.length)}>
+                  <div className="col-span-4 p-3 border-r border-slate-300 bg-slate-50/40 flex items-center">
+                    <span className="text-xs text-slate-400">{idx + 1}.</span>
+                  </div>
+                  <div className="col-span-5 border-r border-slate-200">
+                    <input value={row.name} onChange={e => updGoogleReview(idx, "name", e.target.value)} placeholder="Reviewer name…" className={inlineInput} />
+                  </div>
+                  <div className="col-span-3">
+                    <input type="date" value={row.date} onChange={e => updGoogleReview(idx, "date", e.target.value)} className={inlineInput} />
+                  </div>
+                </div>
+              ))}
+              <div className="p-2 border-t border-slate-100">
+                <button onClick={() => setManual({ ...manual, googleReviews: [...manual.googleReviews, { name: "", date: "" }] })}
+                  className="text-xs text-teal-600 hover:text-teal-700 font-semibold flex items-center gap-1 transition-colors">
+                  <Plus size={11} /> Add row
+                </button>
+              </div>
+            </div>
+
+            {/* Video of Patients */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className="grid grid-cols-12 border-b border-slate-300 bg-slate-50">
+                <div className="col-span-4 p-3 border-r border-slate-300">
+                  <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Video of Patients :-</span>
+                </div>
+                <div className="col-span-5 p-3 border-r border-slate-300 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Name</span>
+                </div>
+                <div className="col-span-3 p-3 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Date</span>
+                </div>
+              </div>
+              {manual.videoPatients.map((row, idx) => (
+                <div key={idx} className={gridRow(idx, manual.videoPatients.length)}>
+                  <div className="col-span-4 p-3 border-r border-slate-300 bg-slate-50/40 flex items-center">
+                    <span className="text-xs text-slate-400">{idx + 1}.</span>
+                  </div>
+                  <div className="col-span-5 border-r border-slate-200">
+                    <input value={row.name} onChange={e => updVideoPatient(idx, "name", e.target.value)} placeholder="Patient name…" className={inlineInput} />
+                  </div>
+                  <div className="col-span-3">
+                    <input type="date" value={row.date} onChange={e => updVideoPatient(idx, "date", e.target.value)} className={inlineInput} />
+                  </div>
+                </div>
+              ))}
+              <div className="p-2 border-t border-slate-100">
+                <button onClick={() => setManual({ ...manual, videoPatients: [...manual.videoPatients, { name: "", date: "" }] })}
+                  className="text-xs text-teal-600 hover:text-teal-700 font-semibold flex items-center gap-1 transition-colors">
+                  <Plus size={11} /> Add row
+                </button>
+              </div>
+            </div>
+
+            {/* Extraordinary Work */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className={sectionHeader}>
+                <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Extraordinary Work :-</span>
+              </div>
+              <div className="p-3 min-h-[80px]">
+                <textarea
+                  value={manual.extraordinaryWork}
+                  onChange={e => setManual({ ...manual, extraordinaryWork: e.target.value })}
+                  placeholder="Describe any extraordinary clinical contributions, complex cases handled, or special achievements..."
+                  className="w-full text-xs text-slate-800 bg-transparent resize-none focus:outline-none min-h-[70px] placeholder-slate-300 leading-relaxed"
+                />
+              </div>
+            </div>
+
+            {/* Success Story */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className="grid grid-cols-12 border-b border-slate-300 bg-slate-50">
+                <div className="col-span-3 p-3 border-r border-slate-300">
+                  <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Success Story :-</span>
+                </div>
+                <div className="col-span-1 p-3 border-r border-slate-300 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase">#</span>
+                </div>
+                <div className="col-span-5 p-3 border-r border-slate-300 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Name of Patient</span>
+                </div>
+                <div className="col-span-3 p-3 text-center">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Case No.</span>
+                </div>
+              </div>
+              {manual.successStories.map((row, idx) => (
+                <div key={idx} className={gridRow(idx, manual.successStories.length)}>
+                  <div className="col-span-3 p-3 border-r border-slate-300 bg-slate-50/40" />
+                  <div className="col-span-1 p-3 border-r border-slate-300 bg-slate-50/40 flex items-center justify-center">
+                    <span className="text-xs font-bold text-slate-600">{idx + 1}</span>
+                  </div>
+                  <div className="col-span-5 border-r border-slate-200">
+                    <input value={row.name} onChange={e => updSuccessStory(idx, "name", e.target.value)} placeholder="Patient name…" className={inlineInput} />
+                  </div>
+                  <div className="col-span-3">
+                    <input value={row.caseNo} onChange={e => updSuccessStory(idx, "caseNo", e.target.value)} placeholder="PT0012" className={inlineInput + " font-mono"} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Remark */}
+            <div className="border border-slate-300 rounded-xl overflow-hidden">
+              <div className={sectionHeader}>
+                <span className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Remark :-</span>
+                <span className="text-[10px] text-slate-400 italic">(office use only)</span>
+              </div>
+              <div className="p-3 min-h-[70px]">
+                <textarea
+                  value={manual.remark}
+                  onChange={e => setManual({ ...manual, remark: e.target.value })}
+                  placeholder="Admin / office remarks..."
+                  className="w-full text-xs text-slate-800 bg-transparent resize-none focus:outline-none min-h-[60px] placeholder-slate-300 leading-relaxed"
+                />
+              </div>
+            </div>
+
           </div>
         </div>
-      ) : (
-        <Card className="py-12 text-center text-slate-400">
-          Select a patient above to view their comprehensive treatment report.
-        </Card>
       )}
     </div>
   );
@@ -2270,6 +2472,526 @@ function SettingsPage() {
   );
 }
 
+/* ============ ATTENDANCE PAGE ============ */
+function AttendancePage({ role, doctors, patients, appts, attendance, addAttendance, updateAttendance, doctorMe }) {
+  const isAdmin = role === "admin";
+  const [viewTab, setViewTab] = useState("daily");
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [markOpen, setMarkOpen] = useState(false);
+  const [markForm, setMarkForm] = useState({ doctorId: "", checkIn: "09:00", checkOut: "17:00", status: "Present" });
+  const [editTarget, setEditTarget] = useState(null);
+
+  const visibleDoctors = isAdmin ? doctors : doctors.filter(d => d.id === doctorMe?.id);
+  const dayAttendance = (attendance || []).filter(a => a.date === selectedDate);
+  const completedToday = (appts || []).filter(a => a.date === selectedDate && a.status === "Completed");
+
+  function openMark(doctor) {
+    const existing = dayAttendance.find(a => a.doctorId === doctor.id);
+    setMarkForm(existing
+      ? { doctorId: doctor.id, checkIn: existing.checkIn || "09:00", checkOut: existing.checkOut || "17:00", status: existing.status }
+      : { doctorId: doctor.id, checkIn: "09:00", checkOut: "17:00", status: "Present" }
+    );
+    setEditTarget(existing || null);
+    setMarkOpen(true);
+  }
+
+  function calcHours(i, o) {
+    if (!i || !o) return 0;
+    const [h1, m1] = i.split(":").map(Number);
+    const [h2, m2] = o.split(":").map(Number);
+    return Math.round(Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60) * 10) / 10;
+  }
+
+  function saveMarkAttendance() {
+    const hoursWorked = (markForm.status === "Present" || markForm.status === "Half Day")
+      ? calcHours(markForm.checkIn, markForm.checkOut) : 0;
+    const record = { ...markForm, date: selectedDate, hoursWorked, doctorId: Number(markForm.doctorId) };
+    if (editTarget) { updateAttendance(editTarget.id, record); } else { addAttendance(record); }
+    setMarkOpen(false);
+  }
+
+  function statusCls(s) {
+    return { Present: "bg-emerald-50 text-emerald-700 border border-emerald-200", Absent: "bg-rose-50 text-rose-700 border border-rose-200", "Half Day": "bg-amber-50 text-amber-700 border border-amber-200", "On Leave": "bg-slate-100 text-slate-600 border border-slate-200" }[s] || "bg-slate-100 text-slate-600 border border-slate-200";
+  }
+
+  const presentCount = dayAttendance.filter(a => a.status === "Present").length;
+  const absentCount = dayAttendance.filter(a => a.status === "Absent" || a.status === "On Leave").length;
+  const totalHours = dayAttendance.reduce((s, a) => s + (a.hoursWorked || 0), 0);
+  const avgHours = presentCount > 0 ? (totalHours / presentCount).toFixed(1) : "—";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Staff Management</div>
+          <h1 className="text-2xl font-display font-bold text-slate-900">Attendance & Daily Visits</h1>
+        </div>
+        <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)}
+          className="px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 shadow-sm cursor-pointer" />
+      </div>
+
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200/80 w-fit">
+        {[["daily", "Staff Attendance"], ["visits", "Patient Visit List"]].map(([key, label]) => (
+          <button key={key} onClick={() => setViewTab(key)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${viewTab === key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {viewTab === "daily" ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[
+              { label: "Present", value: presentCount, color: "text-emerald-700" },
+              { label: "Absent / Leave", value: absentCount, color: "text-rose-600" },
+              { label: "Avg Hours", value: avgHours === "—" ? "—" : avgHours + "h", color: "text-teal-700" },
+              { label: "Sessions Done", value: completedToday.length, color: "text-indigo-700" },
+            ].map((s, i) => (
+              <Card key={i}>
+                <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{s.label}</div>
+                <div className={`text-2xl font-display font-bold ${s.color}`}>{s.value}</div>
+              </Card>
+            ))}
+          </div>
+
+          <Card className="!p-0 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h2 className="text-base font-display font-bold text-slate-900">Staff Attendance — {selectedDate}</h2>
+              {isAdmin && dayAttendance.length < visibleDoctors.length && (
+                <span className="text-xs text-amber-600 font-semibold">
+                  {visibleDoctors.length - dayAttendance.length} not yet marked
+                </span>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="py-3.5 pl-6 pr-4 font-bold">Therapist</th>
+                    <th className="py-3.5 pr-4 font-bold">Check In</th>
+                    <th className="py-3.5 pr-4 font-bold">Check Out</th>
+                    <th className="py-3.5 pr-4 font-bold">Hours</th>
+                    <th className="py-3.5 pr-4 font-bold">Patients</th>
+                    <th className="py-3.5 pr-4 font-bold">Status</th>
+                    <th className="py-3.5 pr-6 font-bold text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-[13px]">
+                  {visibleDoctors.map(doc => {
+                    const att = dayAttendance.find(a => a.doctorId === doc.id);
+                    const docDone = (appts || []).filter(a => a.doctorId === doc.id && a.date === selectedDate && a.status === "Completed").length;
+                    const initials = doc.name.replace("Dr. ", "").split(" ").map(w => w[0]).join("").toUpperCase();
+                    return (
+                      <tr key={doc.id} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-4 pl-6 pr-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center">{initials}</div>
+                            <div>
+                              <div className="font-bold text-slate-900">{doc.name}</div>
+                              <div className="text-[11px] text-slate-400">{doc.specialization}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 pr-4 font-mono text-slate-700 text-xs">{att?.checkIn || <span className="text-slate-300">—</span>}</td>
+                        <td className="py-4 pr-4 font-mono text-slate-700 text-xs">{att?.checkOut || <span className="text-slate-300">—</span>}</td>
+                        <td className="py-4 pr-4 font-bold text-slate-800 text-xs">{att?.hoursWorked ? att.hoursWorked + "h" : <span className="text-slate-300">—</span>}</td>
+                        <td className="py-4 pr-4 font-bold text-teal-700 text-xs">{docDone}</td>
+                        <td className="py-4 pr-4">
+                          {att ? (
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${statusCls(att.status)}`}>{att.status}</span>
+                          ) : (
+                            <span className="text-slate-300 text-xs italic">Not marked</span>
+                          )}
+                        </td>
+                        <td className="py-4 pr-6 text-right">
+                          {(isAdmin || doc.id === doctorMe?.id) && (
+                            <Btn size="sm" variant="soft" onClick={() => openMark(doc)}>
+                              <UserCheck size={12} /> {att ? "Edit" : "Mark"}
+                            </Btn>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visibleDoctors.length === 0 && (
+                    <tr><td colSpan={7} className="py-10 text-center text-slate-400">No staff found.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      ) : (
+        <DailyVisitList date={selectedDate} appts={appts || []} patients={patients} doctors={doctors} />
+      )}
+
+      <Modal open={markOpen} onClose={() => setMarkOpen(false)} title={editTarget ? "Update Attendance" : "Mark Attendance"} small
+        footer={<><Btn variant="ghost" onClick={() => setMarkOpen(false)}>Cancel</Btn><Btn variant="primary" onClick={saveMarkAttendance}>Save</Btn></>}>
+        <Field label="Attendance Status">
+          <Select value={markForm.status} onChange={e => setMarkForm({ ...markForm, status: e.target.value })}>
+            <option>Present</option><option>Half Day</option><option>On Leave</option><option>Absent</option>
+          </Select>
+        </Field>
+        {(markForm.status === "Present" || markForm.status === "Half Day") && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Check In Time"><Input type="time" value={markForm.checkIn} onChange={e => setMarkForm({ ...markForm, checkIn: e.target.value })} /></Field>
+            <Field label="Check Out Time"><Input type="time" value={markForm.checkOut} onChange={e => setMarkForm({ ...markForm, checkOut: e.target.value })} /></Field>
+          </div>
+        )}
+        {(markForm.status === "Present" || markForm.status === "Half Day") && markForm.checkIn && markForm.checkOut && (
+          <div className="mt-2 p-3 bg-teal-50 rounded-xl border border-teal-100 text-xs text-teal-700 font-bold text-center">
+            Hours Worked: {calcHours(markForm.checkIn, markForm.checkOut)} hrs
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ============ DAILY VISIT LIST ============ */
+function DailyVisitList({ date, appts, patients, doctors }) {
+  const dayAppts = appts.filter(a => a.date === date).sort((a, b) => a.time.localeCompare(b.time));
+  const pObj = id => patients.find(p => p.id === id);
+  const dName = id => doctors.find(d => d.id === id)?.name || "—";
+  const completedCount = dayAppts.filter(a => a.status === "Completed").length;
+  const missedCount = dayAppts.filter(a => a.status === "Missed" || a.status === "Cancelled").length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { label: "Total Scheduled", value: dayAppts.length, color: "text-slate-900" },
+          { label: "Completed", value: completedCount, color: "text-emerald-700" },
+          { label: "Missed / Cancelled", value: missedCount, color: "text-rose-600" },
+        ].map((s, i) => (
+          <Card key={i} className="text-center py-4">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">{s.label}</div>
+            <div className={`text-2xl font-display font-bold ${s.color}`}>{s.value}</div>
+          </Card>
+        ))}
+      </div>
+      <Card className="!p-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-base font-display font-bold text-slate-900">Patient Visit Log — {date}</h2>
+          <Btn size="sm" variant="default" onClick={() => window.print()}><Printer size={13} /> Print</Btn>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider">
+                <th className="py-3.5 pl-6 pr-3 font-bold">#</th>
+                <th className="py-3.5 pr-4 font-bold">Time</th>
+                <th className="py-3.5 pr-4 font-bold">Patient</th>
+                <th className="py-3.5 pr-4 font-bold">Therapist</th>
+                <th className="py-3.5 pr-4 font-bold">Treatment</th>
+                <th className="py-3.5 pr-6 font-bold">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-[13px]">
+              {dayAppts.map((a, idx) => {
+                const pat = pObj(a.patientId);
+                return (
+                  <tr key={a.id} className="hover:bg-slate-50/80">
+                    <td className="py-3.5 pl-6 pr-3 font-mono text-slate-400 font-bold">{String(idx + 1).padStart(2, "0")}</td>
+                    <td className="py-3.5 pr-4">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-700 rounded-lg font-mono font-bold text-xs">
+                        <Clock size={11} /> {a.time}
+                      </span>
+                    </td>
+                    <td className="py-3.5 pr-4">
+                      <div className="font-bold text-slate-900">{pat?.name || "—"}</div>
+                      <div className="text-[11px] text-slate-400">{pat?.code} · {pat?.assessment?.bodyPart || "Rehab"}</div>
+                    </td>
+                    <td className="py-3.5 pr-4 text-slate-700 font-medium">{dName(a.doctorId)}</td>
+                    <td className="py-3.5 pr-4">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                        {a.treatmentType || "General"}
+                      </span>
+                    </td>
+                    <td className="py-3.5 pr-6"><Chip status={a.status} /></td>
+                  </tr>
+                );
+              })}
+              {dayAppts.length === 0 && (
+                <tr><td colSpan={6} className="py-10 text-center text-slate-400">No appointments scheduled for {date}.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ============ NOTIFICATIONS PAGE ============ */
+function NotificationsPage({ role, doctors, patients, appts }) {
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const [notifLog, setNotifLog] = useState([]);
+  const [sending, setSending] = useState(null);
+  const [tab, setTab] = useState("patients");
+
+  const todayAppts = (appts || []).filter(a => a.date === today && a.status === "Scheduled").map(a => ({ ...a, day: "today" }));
+  const tomorrowAppts = (appts || []).filter(a => a.date === tomorrow && a.status === "Scheduled").map(a => ({ ...a, day: "tomorrow" }));
+  const upcomingAppts = [...todayAppts, ...tomorrowAppts];
+
+  const pObj = id => patients.find(p => p.id === id);
+  const dObj = id => doctors.find(d => d.id === id);
+
+  async function simulateSend(key, recipient, type, message, phone) {
+    setSending(key);
+    await new Promise(r => setTimeout(r, 700));
+    setNotifLog(prev => [{
+      id: Date.now(), recipient, type, message,
+      phone: phone || "—",
+      sentAt: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      status: "Simulated ✓",
+    }, ...prev]);
+    setSending(null);
+  }
+
+  async function sendAllPatients() {
+    for (const a of upcomingAppts) {
+      const pat = pObj(a.patientId);
+      const msg = `Dear ${pat?.name || "Patient"}, your physiotherapy session is ${a.day} at ${a.time} at Feel Ease Physiotherapy. Please be on time! 🙏`;
+      await simulateSend(`pa-${a.id}`, pat?.name || "Patient", "Patient Reminder", msg, pat?.phone);
+    }
+  }
+
+  const tabs = [
+    { key: "patients", label: "Patient Reminders", count: upcomingAppts.length },
+    { key: "therapists", label: "Therapist Alerts", count: doctors.filter(d => d.status === "Active").length },
+    { key: "staff", label: "Staff Reminders", count: doctors.length },
+    { key: "log", label: "Sent Log", count: notifLog.length },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Communication Hub</div>
+          <h1 className="text-2xl font-display font-bold text-slate-900">Notifications & Reminders</h1>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold text-amber-700">
+          <Smartphone size={14} /> Simulated SMS / WhatsApp Mode
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200/80 flex-wrap">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${tab === t.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}>
+            {t.label}
+            {t.count > 0 && (
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${tab === t.key ? "bg-teal-100 text-teal-700" : "bg-slate-200 text-slate-600"}`}>
+                {t.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "patients" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500 font-medium">Patients with appointments <b>today</b> or <b>tomorrow</b>.</p>
+            <Btn variant="primary" size="sm" onClick={sendAllPatients} disabled={upcomingAppts.length === 0 || sending !== null}>
+              <Send size={12} /> Send All ({upcomingAppts.length})
+            </Btn>
+          </div>
+          <Card className="!p-0 overflow-hidden">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider">
+                  <th className="py-3.5 pl-6 pr-4 font-bold">Patient</th>
+                  <th className="py-3.5 pr-4 font-bold">Phone</th>
+                  <th className="py-3.5 pr-4 font-bold">Appointment</th>
+                  <th className="py-3.5 pr-4 font-bold">Doctor</th>
+                  <th className="py-3.5 pr-6 font-bold text-right">Notify</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-[13px]">
+                {upcomingAppts.map(a => {
+                  const pat = pObj(a.patientId);
+                  const doc = dObj(a.doctorId);
+                  const key = `pa-${a.id}`;
+                  return (
+                    <tr key={a.id} className="hover:bg-slate-50/80">
+                      <td className="py-3.5 pl-6 pr-4">
+                        <div className="font-bold text-slate-900">{pat?.name || "—"}</div>
+                        <div className="text-[11px] text-slate-400">{pat?.code}</div>
+                      </td>
+                      <td className="py-3.5 pr-4 font-mono text-slate-600 text-xs">{pat?.phone || "—"}</td>
+                      <td className="py-3.5 pr-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${a.day === "today" ? "bg-teal-50 text-teal-700 border-teal-200" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
+                          <Clock size={10} /> {a.day === "today" ? "Today" : "Tomorrow"} · {a.time}
+                        </span>
+                      </td>
+                      <td className="py-3.5 pr-4 text-slate-600 font-medium text-xs">{doc?.name || "—"}</td>
+                      <td className="py-3.5 pr-6 text-right">
+                        <Btn size="sm" variant="soft" disabled={sending === key}
+                          onClick={() => {
+                            const msg = `Dear ${pat?.name || "Patient"}, your physiotherapy session is ${a.day} at ${a.time} at Feel Ease Physiotherapy. Please be on time! 🙏`;
+                            simulateSend(key, pat?.name || "Patient", "Patient Reminder", msg, pat?.phone);
+                          }}>
+                          {sending === key ? "Sending…" : <><MessageSquare size={12} /> Remind</>}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {upcomingAppts.length === 0 && (
+                  <tr><td colSpan={5} className="py-10 text-center text-slate-400">No scheduled appointments in the next 48 hours.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
+
+      {tab === "therapists" && (
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500 font-medium">Send today's schedule summary to each physiotherapist.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {doctors.map(doc => {
+              const docAppts = (appts || []).filter(a => a.doctorId === doc.id && a.date === today && a.status === "Scheduled");
+              const firstAppt = [...docAppts].sort((a, b) => a.time.localeCompare(b.time))[0];
+              const key = `th-${doc.id}`;
+              return (
+                <Card key={doc.id} hover>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-slate-900 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
+                        {doc.name.replace("Dr. ", "").split(" ").map(w => w[0]).join("").toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-900">{doc.name}</div>
+                        <div className="text-xs text-teal-700 font-semibold">{doc.specialization}</div>
+                      </div>
+                    </div>
+                    <Chip status={doc.status} />
+                  </div>
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs space-y-1.5 mb-3">
+                    <div className="flex justify-between"><span className="text-slate-500">Scheduled Today</span><span className="font-bold text-slate-900">{docAppts.length} patients</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">First Session</span><span className="font-bold text-teal-700 font-mono">{firstAppt?.time || "—"}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Contact</span><span className="font-mono text-slate-600 text-[11px]">{doc.phone || "—"}</span></div>
+                  </div>
+                  <Btn variant="soft" size="sm" className="w-full" disabled={sending === key}
+                    onClick={() => {
+                      const msg = `Dear ${doc.name}, you have ${docAppts.length} patient(s) today. First session at ${firstAppt?.time || "N/A"}. Please be ready! 💪`;
+                      simulateSend(key, doc.name, "Therapist Alert", msg, doc.phone);
+                    }}>
+                    {sending === key ? "Sending…" : <><Send size={12} /> Notify {doc.name.split(" ").slice(-1)[0]}</>}
+                  </Btn>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === "staff" && (
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500 font-medium">Remind staff to fill their daily attendance and monthly report.</p>
+          <Card className="!p-0 overflow-hidden">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider">
+                  <th className="py-3.5 pl-6 pr-4 font-bold">Staff Member</th>
+                  <th className="py-3.5 pr-4 font-bold">Phone</th>
+                  <th className="py-3.5 pr-4 font-bold">Email</th>
+                  <th className="py-3.5 pr-6 font-bold text-right">Remind</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-[13px]">
+                {doctors.map(doc => {
+                  const key = `st-${doc.id}`;
+                  return (
+                    <tr key={doc.id} className="hover:bg-slate-50/80">
+                      <td className="py-4 pl-6 pr-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-slate-900 text-white text-xs font-bold flex items-center justify-center">
+                            {doc.name.replace("Dr. ", "").split(" ").map(w => w[0]).join("").toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-bold text-slate-900">{doc.name}</div>
+                            <div className="text-[11px] text-slate-400">{doc.specialization}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 pr-4 font-mono text-slate-600 text-xs">{doc.phone || "—"}</td>
+                      <td className="py-4 pr-4 text-slate-500 text-xs">{doc.email || "—"}</td>
+                      <td className="py-4 pr-6 text-right">
+                        <Btn size="sm" variant="soft" disabled={sending === key}
+                          onClick={() => {
+                            const msg = `Dear ${doc.name}, please fill your daily attendance and monthly report on the Recovery Path portal. Thank you! 📋`;
+                            simulateSend(key, doc.name, "Staff Reminder", msg, doc.phone);
+                          }}>
+                          {sending === key ? "Sending…" : <><MessageSquare size={12} /> Remind</>}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      )}
+
+      {tab === "log" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500 font-medium">{notifLog.length} notification(s) sent this session.</p>
+            {notifLog.length > 0 && <Btn size="sm" variant="ghost" onClick={() => setNotifLog([])}>Clear Log</Btn>}
+          </div>
+          {notifLog.length === 0 ? (
+            <Card className="py-12 text-center text-slate-400">
+              <MessageSquare size={28} className="mx-auto mb-3 opacity-30" />
+              <div>No notifications sent yet. Use the tabs above to send reminders.</div>
+            </Card>
+          ) : (
+            <Card className="!p-0 overflow-hidden">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="py-3.5 pl-6 pr-4 font-bold">Recipient</th>
+                    <th className="py-3.5 pr-4 font-bold">Type</th>
+                    <th className="py-3.5 pr-4 font-bold">Phone</th>
+                    <th className="py-3.5 pr-4 font-bold">Message</th>
+                    <th className="py-3.5 pr-4 font-bold">Time</th>
+                    <th className="py-3.5 pr-6 font-bold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-[13px]">
+                  {notifLog.map(n => (
+                    <tr key={n.id} className="hover:bg-slate-50/80">
+                      <td className="py-3.5 pl-6 pr-4 font-bold text-slate-900">{n.recipient}</td>
+                      <td className="py-3.5 pr-4">
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">{n.type}</span>
+                      </td>
+                      <td className="py-3.5 pr-4 font-mono text-slate-500 text-[11px]">{n.phone}</td>
+                      <td className="py-3.5 pr-4 max-w-[180px]">
+                        <p className="truncate text-xs text-slate-500" title={n.message}>{n.message}</p>
+                      </td>
+                      <td className="py-3.5 pr-4 font-mono text-slate-400 text-[11px]">{n.sentAt}</td>
+                      <td className="py-3.5 pr-6">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <Check size={10} /> {n.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ ROUTING HELPERS ============ */
 function PatientProfileRoute({ role, patients, doctors, addSession, updateAssessment, updateTreatment }) {
   const { id } = useParams();
@@ -2320,92 +3042,346 @@ export default function App() {
   }, []);
 
   const navigate = useNavigate();
-  const [loggedIn, setLoggedIn] = useState(true); // default logged in for instant preview
-  const [role, setRole] = useState("admin");
-  const [accountName, setAccountName] = useState("Priya Shah");
-  const [doctorId, setDoctorId] = useState(1);
 
-  const [doctors, setDoctors] = useState(initialDoctors);
-  const [patients, setPatients] = useState(initialPatients);
-  const [appts, setAppts] = useState(initialAppointments);
-  const [exercises, setExercises] = useState(initialExercises);
+  // --- Auth state (persist across page refresh via localStorage) ---
+  const [loggedIn, setLoggedIn] = useState(() => !!loadUser());
+  const storedUser = loadUser();
+  const [role, setRole] = useState(storedUser?.role || "admin");
+  const [accountName, setAccountName] = useState(storedUser?.name || "Priya Shah");
+  const [doctorId, setDoctorId] = useState(storedUser?.doctor_id || null);
 
-  const doctorMe = doctors.find((d) => d.id === doctorId) || doctors[0];
+  // --- Data state ---
+  const [doctors, setDoctors] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [appts, setAppts] = useState([]);
+  const [exercises, setExercises] = useState([]);
+  const [attendance, setAttendance] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("rp_attendance") || "[]"); } catch { return []; }
+  });
+  const [loading, setLoading] = useState(false);
 
-  function handleLogin(acc) {
-    setRole(acc.role);
-    setAccountName(acc.name);
-    if (acc.doctorId) setDoctorId(acc.doctorId);
-    setLoggedIn(true);
-    navigate("/dashboard");
+  // Persist attendance to localStorage on every change
+  useEffect(() => {
+    localStorage.setItem("rp_attendance", JSON.stringify(attendance));
+  }, [attendance]);
+
+  const doctorMe = doctors.find((d) => d.id === doctorId) || doctors[0] || null;
+
+  // --- Register global logout so api.js 401 handler can call it ---
+  useEffect(() => {
+    window.__logout = () => handleLogout();
+    return () => { delete window.__logout; };
+  });
+
+  // --- Fetch all data when logged in ---
+  const refreshAll = useCallback(async () => {
+    if (!loggedIn) return;
+    setLoading(true);
+    try {
+      const [docs, pats, apptList, exList] = await Promise.all([
+        api.doctors.list(),
+        api.patients.list(),
+        api.appointments.list(),
+        api.exercises.list(),
+      ]);
+      setDoctors(docs.map(normalizeDoctor));
+      setPatients(pats.map(normalizePatient));
+      setAppts(apptList.map(normalizeAppt));
+      setExercises(exList.map(normalizeExercise));
+    } catch (err) {
+      console.error("Data load error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [loggedIn]);
+
+  useEffect(() => { refreshAll(); }, [refreshAll]);
+
+  // ---------------------------------------------------------------------------
+  // Shape normalizers — map snake_case API responses to the camelCase shape
+  // that all the existing page components already expect.
+  // ---------------------------------------------------------------------------
+  function normalizeDoctor(d) {
+    return {
+      id: d.id,
+      code: d.code,
+      name: d.name,
+      specialization: d.specialization,
+      phone: d.phone,
+      email: d.email,
+      availableDays: d.available_days,
+      status: d.status,
+    };
+  }
+
+  function normalizePlan(tp) {
+    if (!tp) return null;
+    return {
+      startDate: tp.start_date,
+      endDate: tp.end_date,
+      plannedSessions: tp.planned_sessions,
+      plan: (tp.items || []).map(i => ({
+        treatment: i.treatment,
+        frequency: i.frequency,
+        duration: i.duration,
+      })),
+    };
+  }
+
+  function normalizeAssessment(a) {
+    if (!a) return null;
+    return {
+      mainComplaint: a.main_complaint,
+      bodyPart: a.body_part,
+      onset: a.onset,
+      painLevel: a.pain_level,
+      painType: a.pain_type,
+      rangeOfMotion: a.range_of_motion,
+      muscleStrength: a.muscle_strength,
+      posture: a.posture,
+      diagnosis: a.diagnosis,
+    };
+  }
+
+  function normalizeSession(s) {
+    return {
+      id: s.id,
+      date: s.date,
+      painBefore: s.pain_before,
+      painAfter: s.pain_after,
+      treatmentGiven: s.treatment_given,
+      duration: s.duration,
+      notes: s.notes,
+    };
+  }
+
+  function normalizePatient(p) {
+    return {
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      age: p.age,
+      gender: p.gender,
+      phone: p.phone,
+      email: p.email,
+      address: p.address,
+      emergencyContact: p.emergency_contact,
+      occupation: p.occupation,
+      referredBy: p.referred_by,
+      medicalHistory: p.medical_history,
+      doctorId: p.doctor_id,
+      registrationDate: p.registration_date,
+      status: p.status,
+      assessment: normalizeAssessment(p.assessment),
+      treatment: normalizePlan(p.treatment_plan),
+      sessions: (p.sessions || []).map(normalizeSession),
+    };
+  }
+
+  function normalizeAppt(a) {
+    return {
+      id: a.id,
+      patientId: a.patient_id,
+      doctorId: a.doctor_id,
+      date: a.date,
+      time: a.time,
+      treatmentType: a.treatment_type,
+      status: a.status,
+      notes: a.notes,
+    };
+  }
+
+  function normalizeExercise(e) {
+    return {
+      id: e.id,
+      name: e.name,
+      part: e.body_part,
+      category: e.category,
+      desc: e.description,
+      sets: e.sets,
+      reps: e.reps,
+      duration: e.duration,
+      level: e.level,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auth handlers
+  // ---------------------------------------------------------------------------
+  async function handleLogin(acc) {
+    try {
+      const token = await api.auth.login(acc.username, acc.password);
+      saveToken(token.access_token);
+      saveUser({ role: token.role, name: token.name, doctor_id: token.doctor_id });
+      setRole(token.role);
+      setAccountName(token.name);
+      setDoctorId(token.doctor_id || null);
+      setLoggedIn(true);
+      navigate("/dashboard");
+    } catch (err) {
+      throw err; // LoginScreen catches and shows the error
+    }
   }
 
   function handleLogout() {
+    clearToken();
     setLoggedIn(false);
+    setDoctors([]);
+    setPatients([]);
+    setAppts([]);
+    setExercises([]);
     navigate("/login");
   }
 
   function handleQuickRoleSwitch(newRole, targetDocId = 1) {
-    setRole(newRole);
-    if (newRole === "admin") {
-      setAccountName("Priya Shah");
-    } else {
-      setDoctorId(targetDocId);
-      const doc = doctors.find((d) => d.id === targetDocId);
-      if (doc) setAccountName(doc.name);
+    // Quick-switch is a dev convenience — log in as the matching demo account
+    const accountMap = {
+      admin: { username: "admin", password: "admin123" },
+      therapist: targetDocId === 2
+        ? { username: "dr.ali", password: "ali123" }
+        : { username: "dr.sara", password: "sara123" },
+    };
+    handleLogin(accountMap[newRole]).catch(console.error);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRUD helpers — call API, then refresh state
+  // ---------------------------------------------------------------------------
+  async function addDoctor(form) {
+    const codeNum = String(doctors.length + 1).padStart(3, "0");
+    const payload = {
+      code: `DR${codeNum}`,
+      name: form.name,
+      specialization: form.specialization,
+      phone: form.phone,
+      email: form.email,
+      available_days: form.availableDays,
+      status: form.status || "Active",
+    };
+    const created = await api.doctors.create(payload);
+    setDoctors(prev => [...prev, normalizeDoctor(created)]);
+  }
+
+  async function addPatient(form) {
+    const payload = {
+      name: form.name,
+      age: Number(form.age) || null,
+      gender: form.gender,
+      phone: form.phone,
+      email: form.email,
+      address: form.address,
+      emergency_contact: form.emergencyContact,
+      occupation: form.occupation,
+      referred_by: form.referredBy,
+      medical_history: form.medicalHistory,
+      doctor_id: Number(form.doctorId) || null,
+      status: "New",
+    };
+    const created = await api.patients.create(payload);
+    setPatients(prev => [...prev, normalizePatient(created)]);
+  }
+
+  async function addSession(patientId, session) {
+    const payload = {
+      date: session.date,
+      pain_before: session.painBefore,
+      pain_after: session.painAfter,
+      treatment_given: session.treatmentGiven,
+      duration: session.duration,
+      notes: session.notes,
+    };
+    await api.patients.addSession(patientId, payload);
+    // Refresh the single patient
+    const updated = await api.patients.get(patientId);
+    setPatients(prev => prev.map(p => p.id === patientId ? normalizePatient(updated) : p));
+  }
+
+  async function updateAssessment(patientId, assessment) {
+    const payload = {
+      main_complaint: assessment.mainComplaint,
+      body_part: assessment.bodyPart,
+      onset: assessment.onset,
+      pain_level: assessment.painLevel,
+      pain_type: assessment.painType,
+      range_of_motion: assessment.rangeOfMotion,
+      muscle_strength: assessment.muscleStrength,
+      posture: assessment.posture,
+      diagnosis: assessment.diagnosis,
+    };
+    await api.patients.upsertAssessment(patientId, payload);
+    const updated = await api.patients.get(patientId);
+    setPatients(prev => prev.map(p => p.id === patientId ? normalizePatient(updated) : p));
+  }
+
+  async function updateTreatment(patientId, treatment) {
+    const payload = {
+      start_date: treatment.startDate,
+      end_date: treatment.endDate,
+      planned_sessions: treatment.plannedSessions,
+      items: (treatment.plan || []).map(i => ({
+        treatment: i.treatment,
+        frequency: i.frequency,
+        duration: i.duration,
+      })),
+    };
+    await api.patients.upsertTreatmentPlan(patientId, payload);
+    // Also mark patient as Ongoing if they were New
+    const updated = await api.patients.get(patientId);
+    const normalized = normalizePatient(updated);
+    if (normalized.status === "New") {
+      await api.patients.update(patientId, { status: "Ongoing" });
+      normalized.status = "Ongoing";
     }
+    setPatients(prev => prev.map(p => p.id === patientId ? normalized : p));
   }
 
-  function addDoctor(form) {
-    const id = Math.max(0, ...doctors.map((d) => d.id)) + 1;
-    const code = "DR" + String(doctors.length + 1).padStart(3, "0");
-    setDoctors([...doctors, { id, code, status: "Active", ...form }]);
+  async function addAppt(form) {
+    const payload = {
+      patient_id: Number(form.patientId),
+      doctor_id: Number(form.doctorId),
+      date: form.date,
+      time: form.time,
+      treatment_type: form.treatmentType,
+      notes: form.notes || "",
+      status: "Scheduled",
+    };
+    const created = await api.appointments.create(payload);
+    setAppts(prev => [...prev, normalizeAppt(created)]);
   }
 
-  function addPatient(form) {
-    const id = Math.max(0, ...patients.map((p) => p.id)) + 1;
-    const code = "PT" + String(1000 + patients.length + 1).slice(1);
-    setPatients([...patients, {
-      id, code, ...form, age: Number(form.age) || null, doctorId: Number(form.doctorId) || 1,
-      registrationDate: today, status: "New", assessment: null, treatment: null, sessions: [],
-    }]);
+  async function setApptStatus(id, status) {
+    const updated = await api.appointments.update(id, { status });
+    setAppts(prev => prev.map(a => a.id === id ? normalizeAppt(updated) : a));
   }
 
-  function addSession(patientId, session) {
-    setPatients(patients.map((p) => {
-      if (p.id !== patientId) return p;
-      const nextId = Math.max(0, ...p.sessions.map((s) => s.id)) + 1;
-      return { ...p, sessions: [...p.sessions, { id: nextId, ...session }], status: "Ongoing" };
-    }));
+  async function addExercise(form) {
+    const payload = {
+      name: form.name,
+      body_part: form.part,
+      category: form.category,
+      description: form.desc,
+      sets: form.sets ? Number(form.sets) : null,
+      reps: form.reps ? Number(form.reps) : null,
+      duration: form.duration || null,
+      level: form.level,
+    };
+    const created = await api.exercises.create(payload);
+    setExercises(prev => [...prev, normalizeExercise(created)]);
   }
 
-  function updateAssessment(patientId, assessment) {
-    setPatients(patients.map((p) => (p.id === patientId ? { ...p, assessment } : p)));
+  function addAttendance(record) {
+    setAttendance(prev => [...prev, { ...record, id: Date.now() }]);
   }
 
-  function updateTreatment(patientId, treatment) {
-    setPatients(patients.map((p) => (p.id === patientId ? { ...p, treatment, status: p.status === "New" ? "Ongoing" : p.status } : p)));
-  }
-
-  function addAppt(form) {
-    const id = Math.max(0, ...appts.map((a) => a.id)) + 1;
-    setAppts([...appts, { id, status: "Scheduled", ...form }]);
-  }
-
-  function setApptStatus(id, status) {
-    setAppts(appts.map((a) => (a.id === id ? { ...a, status } : a)));
-  }
-
-  function addExercise(form) {
-    const id = Math.max(0, ...exercises.map((e) => e.id)) + 1;
-    setExercises([...exercises, { id, ...form }]);
+  function updateAttendance(id, record) {
+    setAttendance(prev => prev.map(a => a.id === id ? { ...record, id } : a));
   }
 
   function goToPatient(id) {
     navigate(`/patients/${id}`);
   }
 
-  const scopedPatients = role === "admin" ? patients : patients.filter((p) => p.doctorId === doctorMe.id);
+  const scopedPatients = role === "admin" ? patients : patients.filter((p) => p.doctorId === doctorId);
 
   return (
     <Routes>
@@ -2419,8 +3395,9 @@ export default function App() {
         <Route path="/patients/:id" element={<PatientProfileRoute role={role} patients={patients} doctors={doctors} addSession={addSession} updateAssessment={updateAssessment} updateTreatment={updateTreatment} />} />
         <Route path="/appointments" element={<AppointmentsPage role={role} doctors={doctors} doctorMe={doctorMe} patients={patients} appts={appts} addAppt={addAppt} setApptStatus={setApptStatus} />} />
         <Route path="/library" element={<LibraryPage exercises={exercises} addExercise={addExercise} />} />
-        <Route path="/reports" element={<ReportsPage role={role} patients={scopedPatients} doctors={doctors} />} />
-        <Route path="/reports/:id" element={<ReportsPage role={role} patients={scopedPatients} doctors={doctors} />} />
+        <Route path="/reports" element={<ReportsPage role={role} doctors={doctors} appts={appts} attendance={attendance} />} />
+        <Route path="/attendance" element={<AttendancePage role={role} doctors={doctors} patients={scopedPatients} appts={appts} attendance={attendance} addAttendance={addAttendance} updateAttendance={updateAttendance} doctorMe={doctorMe} />} />
+        <Route path="/notifications" element={<AdminOnly role={role}><NotificationsPage role={role} doctors={doctors} patients={patients} appts={appts} /></AdminOnly>} />
         <Route path="/settings" element={<AdminOnly role={role}><SettingsPage /></AdminOnly>} />
       </Route>
 
