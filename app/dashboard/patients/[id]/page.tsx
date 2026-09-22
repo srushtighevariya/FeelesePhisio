@@ -1,16 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import { PatientProfileClient } from "@/components/patients/PatientProfile";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 
 export default async function PatientProfilePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = await createClient();
+  const auth = await getCachedAuthUser();
+  const isAdmin = auth?.isAdmin ?? false;
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: userProfile } = user
-    ? await supabase.from("users").select("role").eq("id", user.id).single()
-    : { data: null };
-  const isAdmin = userProfile?.role === "admin";
+  const supabase = await createClient();
 
   const [
     { data: patient, error },

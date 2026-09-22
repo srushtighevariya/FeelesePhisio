@@ -33,13 +33,20 @@ const normalizeDate = (d: string | Date | null | undefined): string => {
 };
 
 export function AttendanceClient({ therapists, initialAttendance, today, isTherapist = false }: Props) {
-  const tabs = isTherapist ? (["My Daily Log", "My Weekly Summary"] as const) : (["Daily Log", "Staff Weekly Summary"] as const);
+  const dailyTab   = isTherapist ? "My Daily Log"            : "Daily Log";
+  const weeklyTab  = isTherapist ? "My Weekly Summary"        : "Staff Weekly Summary";
+  const monthlyTab = isTherapist ? "My Monthly Summary"       : "Staff Monthly Summary";
+  const tabs = [dailyTab, weeklyTab, monthlyTab] as const;
   const [tab, setTab] = useState<string>(tabs[0]);
   const [date, setDate] = useState(today);
   const [attendance, setAttendance] = useState<AttRecord[]>(initialAttendance);
   const [loading, setLoading] = useState(false);
   const [pending, start] = useTransition();
   const [savedRow, setSavedRow] = useState<string | null>(null);
+
+  // Monthly summary state — default to current month
+  const [selectedMonth, setSelectedMonth] = useState<string>(today.slice(0, 7)); // "YYYY-MM"
+  const [monthlyAttendance, setMonthlyAttendance] = useState<AttRecord[]>(initialAttendance);
 
   const rows = therapists.map((t) => {
     const rec = attendance.find(
@@ -70,6 +77,19 @@ export function AttendanceClient({ therapists, initialAttendance, today, isThera
       setAttendance(data as AttRecord[]);
     }
     setLoading(false);
+  };
+
+  const loadMonth = async (month: string) => {
+    setSelectedMonth(month);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("attendance")
+      .select("*")
+      .gte("date", `${month}-01`)
+      .lte("date", `${month}-31`);
+    if (data) {
+      setMonthlyAttendance(data as AttRecord[]);
+    }
   };
 
   const mark = (therapistId: string, field: string, value: string) => {
@@ -198,7 +218,29 @@ export function AttendanceClient({ therapists, initialAttendance, today, isThera
     };
   });
 
-  const isDailyTab = tab === tabs[0];
+  // Monthly summary stats
+  const monthlySummary = therapists.map((t) => {
+    const recs = monthlyAttendance.filter((a) => a.therapist_id === t.id);
+    const workingDays = recs.length;
+    const present  = recs.filter((a) => (a.status || "").toLowerCase() === "present").length;
+    const halfDay  = recs.filter((a) => (a.status || "").toLowerCase() === "half-day").length;
+    const leave    = recs.filter((a) => ["leave", "absent"].includes((a.status || "").toLowerCase())).length;
+    const totalHrs = recs.reduce((s, a) => {
+      const st = (a.status || "").toLowerCase();
+      if (st === "leave" || st === "absent") return s;
+      const h = Number(a.hours_worked);
+      if (!isNaN(h) && h > 0) return s + h;
+      if (a.check_in && a.check_out) {
+        const calc = calcHours(a.check_in.slice(0, 5), a.check_out.slice(0, 5));
+        if (calc > 0) return s + calc;
+      }
+      return s + (st === "half-day" ? 4.0 : 8.5);
+    }, 0).toFixed(1);
+    return { id: t.id, name: t.name, specialty: t.specialty, workingDays, present, halfDay, leave, totalHrs };
+  });
+
+  const isDailyTab   = tab === dailyTab;
+  const isWeeklyTab  = tab === weeklyTab;
 
   return (
     <div className="space-y-6 animate-fade-in pb-20 lg:pb-0">
@@ -230,12 +272,22 @@ export function AttendanceClient({ therapists, initialAttendance, today, isThera
               className="px-3.5 py-1.5 bg-white border border-[#D4CFC6] rounded-pill text-xs text-[#1A1A1A] font-semibold focus:outline-none focus:ring-2 focus:ring-accent/30 cursor-pointer"
             />
           </div>
-        ) : (
+        ) : isWeeklyTab ? (
           <div className="flex items-center gap-3">
             <span className="text-xs font-semibold text-[#4B4B4B]">Reporting Week:</span>
             <span className="px-3.5 py-1.5 bg-[#EDE9E1] border border-[#D4CFC6] rounded-pill text-xs text-[#1A1A1A] font-bold">
               {activeWeek.label}
             </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-[#4B4B4B]">Month:</span>
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => loadMonth(e.target.value)}
+              className="px-3.5 py-1.5 bg-white border border-[#D4CFC6] rounded-pill text-xs text-[#1A1A1A] font-semibold focus:outline-none focus:ring-2 focus:ring-accent/30 cursor-pointer"
+            />
           </div>
         )}
       </div>
@@ -377,8 +429,8 @@ export function AttendanceClient({ therapists, initialAttendance, today, isThera
             </table>
           </div>
         </div>
-      ) : (
-        /* Staff Monthly Summary */
+      ) : isWeeklyTab ? (
+        /* Staff Weekly Summary */
         <div className="card-white p-0 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="table-base">
@@ -409,6 +461,60 @@ export function AttendanceClient({ therapists, initialAttendance, today, isThera
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Staff Monthly Summary */
+        <div className="card-white p-0 overflow-hidden">
+          <div className="px-5 py-3 bg-gradient-to-r from-[#EDE9E1] to-[#F7F5F0] border-b border-[#D4CFC6] flex items-center gap-2">
+            <ClipboardCheck size={15} className="text-accent" />
+            <span className="text-xs font-bold text-[#1A1A1A]">
+              Monthly Report —{" "}
+              {new Date(selectedMonth + "-01").toLocaleDateString("en-IN", { month: "long", year: "numeric" })}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="table-base">
+              <thead>
+                <tr>
+                  <th>Doctor / Staff</th>
+                  <th>Specialty</th>
+                  <th>Days Present</th>
+                  <th>Half Days</th>
+                  <th>Leave / Absent</th>
+                  <th>Logged Days</th>
+                  <th className="text-right">Total Hours</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthlySummary.map((s) => (
+                  <tr key={s.id}>
+                    <td className="font-semibold text-[#1A1A1A]">{s.name}</td>
+                    <td className="text-xs text-[#9B9B9B]">{s.specialty || "Physiotherapist"}</td>
+                    <td>
+                      <span className="badge-completed">{s.present} Days</span>
+                    </td>
+                    <td>
+                      <span className="badge-scheduled">{s.halfDay} Days</span>
+                    </td>
+                    <td>
+                      <span className="badge-missed">{s.leave} Days</span>
+                    </td>
+                    <td className="text-xs text-[#4B4B4B] font-semibold">{s.workingDays} Days</td>
+                    <td className="text-right font-bold text-[#1A1A1A]">
+                      {s.totalHrs} hrs
+                    </td>
+                  </tr>
+                ))}
+                {monthlySummary.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="py-10 text-center text-[#9B9B9B] text-xs">
+                      No attendance data for this month.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -1,54 +1,32 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
+import { ChatPanel } from "@/components/layout/ChatPanel";
+import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
+  const auth = await getCachedAuthUser();
 
-  // Server-side auth guard
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!auth?.user) {
     redirect("/login");
   }
 
-  // Get role from public.users
-  const { data: profile } = await supabase
-    .from("users")
-    .select("name, role")
-    .eq("id", user.id)
-    .single();
+  const role = auth.role;
+  const userName = auth.userName;
+  const isAdmin = auth.isAdmin;
+  const currentTherapistId = auth.therapistId;
 
-  const profileData = profile as unknown as { name: string; role: string } | null;
-  const role = (profileData?.role ?? "therapist") as "admin" | "therapist";
-  let userName = profileData?.name ?? "";
-
-  // Always resolve real doctor name for therapist users
-  if (role === "therapist" || !userName || userName.toLowerCase() === "therapist" || userName.toLowerCase() === "admin") {
-    const { data: therapist } = await supabase
-      .from("therapists")
-      .select("name")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-    if (therapist?.name) {
-      userName = therapist.name;
-    }
-  }
-
-  // Never display literal 'therapist' or 'admin' as user's name
-  if (!userName || userName.toLowerCase() === "therapist") {
-    userName = role === "therapist" ? "Dr. Himanshu Nayak" : "Clinic Admin";
-  } else if (userName.toLowerCase() === "admin") {
-    userName = "Clinic Admin";
-  }
-
+  // Fetch therapist list for chat
+  const supabase = await createClient();
+  const { data: therapists } = await supabase
+    .from("therapists")
+    .select("id, name, specialty, user_id")
+    .order("name");
 
   return (
     <div className="flex h-screen bg-page overflow-hidden print:block print:h-auto print:overflow-visible print:bg-white">
@@ -64,6 +42,15 @@ export default async function DashboardLayout({
           </div>
         </main>
       </div>
+
+      {/* Chat Panel — floating */}
+      <ChatPanel
+        currentTherapistId={currentTherapistId}
+        currentUserId={auth.user.id}
+        isAdmin={isAdmin}
+        therapists={therapists ?? []}
+        currentUserName={userName}
+      />
     </div>
   );
 }

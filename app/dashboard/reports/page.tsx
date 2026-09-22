@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { ReportsHubClient } from "@/components/reports/ReportsHubClient";
-import { getCurrentTherapist } from "@/lib/actions/therapists";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -8,13 +8,12 @@ export const metadata: Metadata = {
 };
 
 export default async function ReportsPage() {
+  const auth = await getCachedAuthUser();
+  const isAdmin = auth?.isAdmin ?? false;
+  const therapist = auth?.therapist ?? null;
+  const therapistId = auth?.therapistId ?? null;
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: profile } = user
-    ? await supabase.from("users").select("role").eq("id", user.id).single()
-    : { data: null };
-  const { isAdmin, therapist } = await getCurrentTherapist();
-  const therapistId = therapist?.id || null;
 
   const [
     { data: patients },

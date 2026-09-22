@@ -1,7 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
-import { Plus, Search, Users, ArrowRight } from "lucide-react";
+import { Plus, Users, ArrowRight } from "lucide-react";
 import { getInitials } from "@/lib/utils";
+import { getCachedAuthUser } from "@/lib/auth-cache";
+import { Suspense } from "react";
+import { PatientsFilterBar } from "@/components/patients/PatientsFilterBar";
 
 export default async function PatientsPage({
   searchParams,
@@ -9,13 +12,11 @@ export default async function PatientsPage({
   searchParams: Promise<{ q?: string; status?: string; doctor?: string }>;
 }) {
   const { q = "", status = "", doctor = "" } = await searchParams;
-  const supabase = await createClient();
+  const auth = await getCachedAuthUser();
+  const isAdmin = auth?.isAdmin ?? false;
+  const therapistId = auth?.therapistId;
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: userProfile } = user
-    ? await supabase.from("users").select("role").eq("id", user.id).single()
-    : { data: null };
-  const isAdmin = userProfile?.role === "admin";
+  const supabase = await createClient();
 
   let query = supabase
     .from("patients")
@@ -27,15 +28,8 @@ export default async function PatientsPage({
   if (doctor) query = query.eq("therapist_id", doctor);
 
   // If therapist and no doctor filter specified, auto-filter to own patients
-  if (!isAdmin && user) {
-    const { data: th } = await supabase
-      .from("therapists")
-      .select("id")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-    if (th?.id) {
-      query = query.eq("therapist_id", th.id);
-    }
+  if (!isAdmin && therapistId) {
+    query = query.eq("therapist_id", therapistId);
   }
 
   const { data: patients } = await query;
@@ -72,57 +66,15 @@ export default async function PatientsPage({
       </div>
 
       {/* Filter Bar */}
-      <form className="card-white p-4 flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9B9B9B]" />
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Search patient name, case id…"
-            className="input-base pl-9 text-xs"
-          />
-        </div>
-
-        <select
-          name="status"
-          defaultValue={status}
-          className="px-3.5 py-2.5 rounded-xl border border-[#D4CFC6] bg-white text-xs text-[#1A1A1A] font-medium focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent cursor-pointer"
-        >
-          <option value="">All Statuses</option>
-          {["Ongoing", "Active", "New", "Completed", "Discharged"].map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-
-        {isAdmin && therapists && (
-          <select
-            name="doctor"
-            defaultValue={doctor}
-            className="px-3.5 py-2.5 rounded-xl border border-[#D4CFC6] bg-white text-xs text-[#1A1A1A] font-medium focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent cursor-pointer"
-          >
-            <option value="">All Attending Doctors</option>
-            {therapists.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        )}
-
-        <button
-          type="submit"
-          className="btn-secondary text-xs"
-        >
-          Apply Filter
-        </button>
-
-        {(q || status || doctor) && (
-          <Link
-            href="/dashboard/patients"
-            className="btn-ghost text-xs"
-          >
-            Reset
-          </Link>
-        )}
-      </form>
+      <Suspense fallback={<div className="card-white p-4 h-14 animate-pulse rounded-2xl" />}>
+        <PatientsFilterBar
+          q={q}
+          status={status}
+          doctor={doctor}
+          therapists={therapists ?? null}
+          isAdmin={isAdmin}
+        />
+      </Suspense>
 
       {/* Patient Table */}
       <div className="card-white overflow-hidden p-0">

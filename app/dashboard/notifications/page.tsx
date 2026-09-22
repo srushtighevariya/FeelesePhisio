@@ -1,32 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { AdminNotificationsClient } from "@/components/notifications/NotificationsClient";
 import { TherapistNotificationsClient } from "@/components/notifications/TherapistNotificationsClient";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Notifications" };
 export const dynamic = "force-dynamic";
 
 export default async function NotificationsPage() {
+  const auth = await getCachedAuthUser();
+  const isAdmin = auth?.isAdmin ?? false;
+  const therapistId = auth?.therapistId ?? "";
+  const therapistName = auth?.userName ?? "Therapist";
+
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  const { data: profile } = user
-    ? await supabase.from("users").select("role").eq("id", user.id).single()
-    : { data: null };
-
-  const isAdmin = profile?.role === "admin";
 
   // ── THERAPIST VIEW ─────────────────────────────────────────────────────────
-  if (!isAdmin && user) {
-    const { data: therapist } = await supabase
-      .from("therapists")
-      .select("id, name")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-
-    const therapistId = therapist?.id ?? "";
-    const therapistName = therapist?.name ?? "Therapist";
-
+  if (!isAdmin && auth?.user) {
     const { data: notifications } = therapistId
       ? await supabase
           .from("notification_log")

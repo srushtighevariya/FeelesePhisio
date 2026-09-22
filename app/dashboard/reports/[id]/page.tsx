@@ -45,8 +45,10 @@ export default async function PatientReportPage({ params }: Props) {
   const latestAssessment = assessments[assessments.length - 1] ?? null;
   const activePlan = plans.find((p: any) => p.status === "active") ?? plans[plans.length - 1] ?? null;
   const completedSessions = sessions.length;
-  const plannedSessions = activePlan?.frequency || 10;
-  const completionPct = Math.min(100, Math.round((completedSessions / plannedSessions) * 100));
+  const plannedSessions = activePlan?.frequency ?? null;
+  const completionPct = plannedSessions
+    ? Math.min(100, Math.round((completedSessions / plannedSessions) * 100))
+    : null;
 
   const firstPain = sessions.find((s: any) => s.pain_before != null)?.pain_before ?? null;
   const lastPain = [...sessions].reverse().find((s: any) => s.pain_after != null)?.pain_after ?? null;
@@ -140,7 +142,7 @@ export default async function PatientReportPage({ params }: Props) {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { label: "Sessions Completed", value: completedSessions },
-            { label: "Planned Target", value: plannedSessions || "10" },
+            { label: "Planned Target", value: plannedSessions != null ? plannedSessions : "—" },
             { label: "Initial Pain", value: firstPain != null ? `${firstPain}/10` : "Pending" },
             { label: "Current Pain", value: lastPain != null ? `${lastPain}/10` : "Pending" },
           ].map((kpi) => (
@@ -159,7 +161,7 @@ export default async function PatientReportPage({ params }: Props) {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-semibold text-[#1A1A1A]">
-                    {completedSessions}/{plannedSessions} sessions • {completionPct}% protocol completed
+                    {completedSessions}{plannedSessions != null ? `/${plannedSessions} sessions • ${completionPct}% protocol completed` : " sessions completed"}
                   </p>
                   <p className="text-xs text-[#9B9B9B] mt-0.5">
                     Goal: {activePlan.goals || "Pain reduction & functional mobility restoration"}

@@ -20,11 +20,14 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 
+
+
 interface NavItem {
   href: string;
   label: string;
   icon: React.ElementType;
   adminOnly?: boolean;
+  therapistOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -36,9 +39,9 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/attendance",   label: "Attendance",      icon: ClipboardList },
   { href: "/dashboard/reports",      label: "Reports",         icon: Activity },
   { href: "/dashboard/therapists",   label: "Therapists",      icon: UserCog, adminOnly: true },
-  { href: "/dashboard/notifications",label: "Notifications",   icon: Bell },
+  { href: "/dashboard/notifications",label: "Notifications",   icon: Bell, therapistOnly: true },
+  { href: "/dashboard/profile",      label: "My Profile",      icon: UserCog, therapistOnly: true },
   { href: "/dashboard/settings",     label: "Settings",        icon: Settings, adminOnly: true },
-
 ];
 
 interface SidebarProps {
@@ -69,9 +72,11 @@ export function Sidebar({ role, name }: SidebarProps) {
   }
 
 
-  const visibleItems = NAV_ITEMS.filter((item) =>
-    item.adminOnly ? role === "admin" : true
-  );
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.adminOnly) return role === "admin";
+    if (item.therapistOnly) return role === "therapist";
+    return true;
+  });
 
   async function handleLogout() {
     const supabase = createClient();
@@ -209,7 +214,7 @@ export function Sidebar({ role, name }: SidebarProps) {
                 onClick={() => setShowLogoutConfirm(false)}
                 className="flex-1 py-2.5 px-4 bg-[#EDE9E1] hover:bg-[#DDD5C7] text-[#1A1A1A] text-xs font-semibold rounded-pill transition-colors cursor-pointer"
               >
-                Cancel — Stay Signed In
+                Cancel
               </button>
               <button
                 onClick={handleLogout}

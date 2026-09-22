@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { format } from "date-fns";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
 import { syncAutoMissedAppointments, syncDayOfReminders } from "@/lib/actions/appointments";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -15,37 +16,17 @@ export default async function DashboardPage() {
   void syncAutoMissedAppointments();
   void syncDayOfReminders();
 
+  const auth = await getCachedAuthUser();
+  if (!auth?.user) return null;
+
+  const { role, userName, isAdmin, therapist: currentTherapist } = auth;
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
 
   const today = format(new Date(), "yyyy-MM-dd");
   const thirtyDaysAgo = format(
     new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
     "yyyy-MM-dd"
   );
-
-  // Fetch user profile
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role, name")
-    .eq("id", user.id)
-    .single();
-
-  const role = (profile?.role ?? "therapist") as "admin" | "therapist";
-  const userName = profile?.name ?? user.email ?? "Doctor";
-  const isAdmin = role === "admin";
-
-  // If therapist, find therapist record
-  let currentTherapist: any = null;
-  if (!isAdmin) {
-    const { data: th } = await supabase
-      .from("therapists")
-      .select("id, name, specialty")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-    currentTherapist = th;
-  }
 
   // Base queries scoped if therapist
   let patientQuery = supabase.from("patients").select("*", { count: "exact", head: true });

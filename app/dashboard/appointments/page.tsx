@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { AppointmentsClient } from "@/components/appointments/AppointmentsClient";
 import { syncAutoMissedAppointments } from "@/lib/actions/appointments";
+import { getCachedAuthUser } from "@/lib/auth-cache";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -12,30 +13,22 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function AppointmentsPage() {
-  await syncAutoMissedAppointments();
+  // Non-blocking auto-missed sync
+  void syncAutoMissedAppointments();
+
+  const auth = await getCachedAuthUser();
+  const isAdmin = auth?.isAdmin ?? false;
+  const therapistId = auth?.therapistId;
+
   const supabase = await createClient();
-
-
-  const { data: { user } } = await supabase.auth.getUser();
-  const { data: userProfile } = user
-    ? await supabase.from("users").select("role").eq("id", user.id).single()
-    : { data: null };
-  const isAdmin = userProfile?.role === "admin";
 
   let query = supabase
     .from("appointments")
     .select("*, patients(id,name), therapists(id,name)")
     .order("date", { ascending: false });
 
-  if (!isAdmin && user) {
-    const { data: th } = await supabase
-      .from("therapists")
-      .select("id")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-      .maybeSingle();
-    if (th?.id) {
-      query = query.eq("therapist_id", th.id);
-    }
+  if (!isAdmin && therapistId) {
+    query = query.eq("therapist_id", therapistId);
   }
 
   const { data: appts } = await query;

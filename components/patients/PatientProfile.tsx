@@ -45,8 +45,8 @@ export function PatientProfileClient({ patient, sessions, assessment, plan, ther
 
   const reliefPoints = initialPain != null && currentPain != null ? Math.max(0, initialPain - currentPain) : 0;
   const pctRelief = initialPain != null && initialPain > 0 ? Math.round((reliefPoints / initialPain) * 100) : 0;
-  const plannedSessions = plan?.items?.length ? plan.items.length * 3 : 10;
-  const progressPct = Math.min(Math.round((sessions.length / plannedSessions) * 100), 100);
+  const plannedSessions = plan?.items?.length ? plan.items.length * 3 : null;
+  const progressPct = plannedSessions ? Math.min(Math.round((sessions.length / plannedSessions) * 100), 100) : null;
 
   const currentTherapist = therapists.find((t) => t.id === (patient.therapist_id || (patient.therapists as any)?.id));
   const docName = (patient.therapists as any)?.name ?? currentTherapist?.name ?? "Attending Physiotherapist";
@@ -148,11 +148,15 @@ export function PatientProfileClient({ patient, sessions, assessment, plan, ther
           <div className="flex sm:flex-col items-end justify-between sm:justify-center border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-100">
             <div className="text-left sm:text-right">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Protocol Progress</div>
-              <div className="text-lg font-display font-bold text-slate-900 mt-0.5">{sessions.length} / {plannedSessions} Sessions</div>
+              <div className="text-lg font-display font-bold text-slate-900 mt-0.5">
+                {sessions.length} {plannedSessions != null ? `/ ${plannedSessions} Sessions` : "Sessions Completed"}
+              </div>
             </div>
-            <div className="w-32 bg-slate-100 h-2 rounded-full overflow-hidden mt-1.5">
-              <div className="bg-teal-600 h-full rounded-full transition-all" style={{ width: `${progressPct}%` }} />
-            </div>
+            {plannedSessions != null && (
+              <div className="w-32 bg-slate-100 h-2 rounded-full overflow-hidden mt-1.5">
+                <div className="bg-teal-600 h-full rounded-full transition-all" style={{ width: `${progressPct}%` }} />
+              </div>
+            )}
           </div>
         </div>
       </div>

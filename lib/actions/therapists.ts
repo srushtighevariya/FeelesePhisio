@@ -16,40 +16,10 @@ export async function getTherapists() {
 }
 
 export async function getCurrentTherapist() {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { isAdmin: false, therapist: null };
-
-  const { data: profile } = await supabase
-    .from("users")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  const isAdmin = profile?.role === "admin";
-  if (isAdmin) {
-    return { isAdmin: true, therapist: null };
-  }
-
-  // 1. Match by user_id or email
-  let { data: th } = await supabase
-    .from("therapists")
-    .select("id, name, specialty, email, phone")
-    .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-    .maybeSingle();
-
-  // 2. Fallback: if not found, match by name or return first therapist
-  if (!th) {
-    const { data: fallbackTh } = await supabase
-      .from("therapists")
-      .select("id, name, specialty, email, phone")
-      .order("name")
-      .limit(1)
-      .maybeSingle();
-    th = fallbackTh;
-  }
-
-  return { isAdmin: false, therapist: th };
+  const { getCachedAuthUser } = await import("@/lib/auth-cache");
+  const auth = await getCachedAuthUser();
+  if (!auth) return { isAdmin: false, therapist: null };
+  return { isAdmin: auth.isAdmin, therapist: auth.therapist };
 }
 
 export async function addTherapist(form: {
@@ -202,5 +172,32 @@ export async function setTherapistPassword(therapistId: string, newPassword: str
   }
 
   revalidatePath("/dashboard/therapists");
+  return { success: true };
+}
+
+export async function updateTherapistProfile(
+  therapistId: string,
+  data: {
+    name?: string;
+    specialty?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    bio?: string | null;
+  }
+) {
+  const supabase = await createServerClient();
+  const { error } = await supabase
+    .from("therapists")
+    .update({
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.specialty !== undefined && { specialty: data.specialty }),
+      ...(data.phone !== undefined && { phone: data.phone }),
+      ...(data.email !== undefined && { email: data.email }),
+    })
+    .eq("id", therapistId);
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard/profile");
+  revalidatePath("/dashboard");
   return { success: true };
 }
