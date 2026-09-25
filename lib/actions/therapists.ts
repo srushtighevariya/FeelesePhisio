@@ -1,9 +1,8 @@
 "use server";
 
 import { createClient as createServerClient } from "@/lib/supabase/server";
-import { createClient as createAnonClient } from "@supabase/supabase-js";
-import { getDbClient } from "@/lib/db";
 import { revalidatePath } from "next/cache";
+
 
 export async function getTherapists() {
   const supabase = await createServerClient();
@@ -96,79 +95,70 @@ export async function setTherapistPassword(therapistId: string, newPassword: str
     throw new Error("Password must be at least 6 characters long.");
   }
 
-  const db = await getDbClient();
-  try {
-    // 1. Get therapist record
-    const thRes = await db.query("SELECT id, user_id, email, name FROM public.therapists WHERE id = $1;", [therapistId]);
-    if (thRes.rows.length === 0) {
-      throw new Error("Therapist record not found.");
-    }
-    const th = thRes.rows[0];
+  // Use Supabase Admin API — no DATABASE_URL / raw pg needed
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const adminClient = createAdminClient();
+  const supabase = await createServerClient();
 
-    if (th.user_id) {
-      // User exists in auth.users -> update password directly with pgcrypto bcrypt
-      await db.query(
-        `UPDATE auth.users 
-         SET encrypted_password = extensions.crypt($1, extensions.gen_salt('bf')),
-             updated_at = now()
-         WHERE id = $2;`,
-        [newPassword, th.user_id]
-      );
-      await db.query(
-        `INSERT INTO public.users (id, email, name, role)
-         VALUES ($1, $2, $3, 'therapist')
-         ON CONFLICT (id) DO UPDATE SET role = 'therapist';`,
-        [th.user_id, th.email, th.name]
-      );
-    } else if (th.email) {
-      // Check if user exists by email in auth.users
-      const userRes = await db.query("SELECT id FROM auth.users WHERE email = $1;", [th.email]);
-      if (userRes.rows.length > 0) {
-        const uid = userRes.rows[0].id;
-        await db.query(
-          `UPDATE auth.users 
-           SET encrypted_password = extensions.crypt($1, extensions.gen_salt('bf')),
-               updated_at = now()
-           WHERE id = $2;`,
-          [newPassword, uid]
-        );
-        // Must insert into public.users BEFORE updating public.therapists.user_id due to foreign key constraint
-        await db.query(
-          `INSERT INTO public.users (id, email, name, role)
-           VALUES ($1, $2, $3, 'therapist')
-           ON CONFLICT (id) DO UPDATE SET role = 'therapist';`,
-          [uid, th.email, th.name]
-        );
-        await db.query("UPDATE public.therapists SET user_id = $1 WHERE id = $2;", [uid, therapistId]);
-      } else {
-        // Create new auth user
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-        const anon = createAnonClient(supabaseUrl, supabaseAnon);
-        const { data, error } = await anon.auth.signUp({
-          email: th.email,
-          password: newPassword,
-          options: { data: { name: th.name, role: "therapist" } },
-        });
-        if (error) throw new Error(error.message);
-        if (data.user?.id) {
-          const uid = data.user.id;
-          await db.query("UPDATE auth.users SET email_confirmed_at = now() WHERE id = $1;", [uid]);
-          // Must insert into public.users BEFORE updating public.therapists.user_id due to foreign key constraint
-          await db.query(
-            `INSERT INTO public.users (id, email, name, role)
-             VALUES ($1, $2, $3, 'therapist')
-             ON CONFLICT (id) DO UPDATE SET role = 'therapist';`,
-            [uid, th.email, th.name]
-          );
-          await db.query("UPDATE public.therapists SET user_id = $1 WHERE id = $2;", [uid, therapistId]);
-        }
-      }
+  // 1. Get therapist record
+  const { data: th, error: fetchErr } = await supabase
+    .from("therapists")
+    .select("id, user_id, email, name")
+    .eq("id", therapistId)
+    .single();
+
+  if (fetchErr || !th) {
+    throw new Error("Therapist record not found.");
+  }
+
+  if (th.user_id) {
+    // Auth user already exists — just update password
+    const { error } = await adminClient.auth.admin.updateUserById(th.user_id, {
+      password: newPassword,
+    });
+    if (error) throw new Error(error.message);
+  } else if (th.email) {
+    // Check if an auth user with this email already exists
+    const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers();
+    if (listErr) throw new Error(listErr.message);
+
+    const existingUser = listData.users.find(
+      (u) => u.email?.toLowerCase() === th.email?.toLowerCase()
+    );
+
+    if (existingUser) {
+      // Update password for the existing auth user
+      const { error: updErr } = await adminClient.auth.admin.updateUserById(existingUser.id, {
+        password: newPassword,
+        email_confirm: true,
+      });
+      if (updErr) throw new Error(updErr.message);
+
+      // Link therapist row to this auth user
+      await supabase
+        .from("therapists")
+        .update({ user_id: existingUser.id })
+        .eq("id", therapistId);
     } else {
-      throw new Error("Therapist does not have an email address to set up credentials.");
+      // Create a brand-new auth user
+      const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
+        email: th.email,
+        password: newPassword,
+        email_confirm: true,
+        user_metadata: { name: th.name, role: "therapist" },
+      });
+      if (createErr) throw new Error(createErr.message);
+
+      if (created.user?.id) {
+        // Link therapist row to new auth user
+        await supabase
+          .from("therapists")
+          .update({ user_id: created.user.id })
+          .eq("id", therapistId);
+      }
     }
-  } finally {
-    await db.end();
+  } else {
+    throw new Error("Therapist does not have an email address to set up credentials.");
   }
 
   revalidatePath("/dashboard/therapists");
