@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { format } from "date-fns";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
-import { syncAutoMissedAppointments, syncDayOfReminders } from "@/lib/actions/appointments";
+// Sync operations moved to /api/sync — fired as background fetch from layout
 import { getCachedAuthUser } from "@/lib/auth-cache";
 import type { Metadata } from "next";
 
@@ -12,9 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function DashboardPage() {
-  // Run background syncs — non-blocking
-  void syncAutoMissedAppointments();
-  void syncDayOfReminders();
+  // Background sync is fired from the client layout via /api/sync (no page-render blocking)
 
   const auth = await getCachedAuthUser();
   if (!auth?.user) return null;
@@ -56,7 +54,7 @@ export default async function DashboardPage() {
   let activePlansQuery = supabase
     .from("patients")
     .select("id, name, diagnosis, status, therapist_id, therapists(name)")
-    .in("status", ["Active", "Ongoing", "New"])
+    .in("status", ["Ongoing"])
     .order("created_at", { ascending: false })
     .limit(6);
 

@@ -25,19 +25,27 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // Use getSession() — reads the local JWT cookie only, no outbound network call.
+  // This saves 300-800ms of Supabase Auth round-trip latency on every navigation.
+  // Full user validation still happens inside Server Components via getCachedAuthUser().
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
 
   const { pathname } = request.nextUrl;
 
-  if (!user && pathname.startsWith("/dashboard")) {
+  // Skip middleware for API routes — they handle their own auth
+  if (pathname.startsWith("/api/")) {
+    return supabaseResponse;
+  }
+
+  if (!session && pathname.startsWith("/dashboard")) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && pathname === "/login") {
+  if (session && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     return NextResponse.redirect(url);

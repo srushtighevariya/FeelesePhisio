@@ -83,7 +83,7 @@ export function PatientsFilterBar({ q, status, doctor, therapists, isAdmin }: Pr
         className="px-3.5 py-2.5 rounded-xl border border-[#D4CFC6] bg-white text-xs text-[#1A1A1A] font-medium focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent cursor-pointer"
       >
         <option value="">All Statuses</option>
-        {["Ongoing", "Active", "New", "Completed", "Discharged"].map((s) => (
+        {["Ongoing", "Completed", "Discharged"].map((s) => (
           <option key={s} value={s}>{s}</option>
         ))}
       </select>

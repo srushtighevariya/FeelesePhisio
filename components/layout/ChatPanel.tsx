@@ -6,7 +6,6 @@ import {
   Circle, Minimize2, Maximize2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { sendChatMessage, markChatMessagesRead } from "@/lib/actions/chat";
 
 interface Therapist {
   id: string;
@@ -32,6 +31,9 @@ interface Props {
   isAdmin: boolean;
   therapists: Therapist[];
   currentUserName: string;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  onUnreadChange: (total: number) => void;
 }
 
 function getRoomId(a: string, b: string) {
@@ -73,7 +75,6 @@ function getAvatarColor(id: string) {
   return AVATAR_COLORS[id];
 }
 
-// Sentinel ID for admin participant
 const ADMIN_SENTINEL = "admin";
 
 export function ChatPanel({
@@ -81,24 +82,33 @@ export function ChatPanel({
   currentUserId,
   isAdmin,
   therapists,
-  currentUserName,
+  open,
+  setOpen,
+  onUnreadChange,
 }: Props) {
-  const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
-  const [selectedContact, setSelectedContact] = useState<Therapist | { id: "admin"; name: string; specialty: string } | null>(null);
+  const [selectedContact, setSelectedContact] = useState<
+    Therapist | { id: string; name: string; specialty: string } | null
+  >(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [search, setSearch] = useState("");
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
-  const [totalUnread, setTotalUnread] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const myId = isAdmin ? ADMIN_SENTINEL : (currentTherapistId ?? "");
+  // Use a ref for activeRoomId so the realtime callback always has the latest value
+  // without needing to re-subscribe
+  const myId = isAdmin ? ADMIN_SENTINEL : (currentTherapistId || currentUserId || "");
+  const activeRoomIdRef = useRef<string | null>(null);
+  const seenMsgIds = useRef<Set<string>>(new Set());
 
-  // Build contact list
-  const contacts: Array<{ id: string; name: string; specialty?: string | null }> = isAdmin
+  const activeRoomId = selectedContact ? getRoomId(myId, selectedContact.id) : null;
+  activeRoomIdRef.current = activeRoomId;
+
+  const contacts = isAdmin
     ? therapists.map((t) => ({ id: t.id, name: t.name, specialty: t.specialty }))
     : [
         { id: ADMIN_SENTINEL, name: "Clinic Admin", specialty: "Administration" },
@@ -109,23 +119,20 @@ export function ChatPanel({
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
-  const activeRoomId = selectedContact
-    ? getRoomId(myId, selectedContact.id)
-    : null;
-
-  // Scroll to bottom
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, 50);
+    }, 60);
   }, []);
 
-  // Load messages for selected room
+  // Load messages when entering a room
   useEffect(() => {
     if (!activeRoomId) {
       setMessages([]);
+      seenMsgIds.current.clear();
       return;
     }
+    setError(null);
     const supabase = createClient();
     supabase
       .from("chat_messages")
@@ -133,69 +140,136 @@ export function ChatPanel({
       .eq("room_id", activeRoomId)
       .order("created_at", { ascending: true })
       .limit(80)
-      .then(({ data }) => {
-        setMessages((data ?? []) as Message[]);
+      .then(({ data, error: err }) => {
+        if (err) {
+          console.error("Load messages error:", err);
+          setError("Could not load messages.");
+          return;
+        }
+        const msgs = (data ?? []) as Message[];
+        msgs.forEach((m) => seenMsgIds.current.add(m.id));
+        setMessages(msgs);
         scrollToBottom();
       });
 
-    // Mark read
+    // Mark others' messages as read — client-side directly
     if (myId) {
-      markChatMessagesRead(activeRoomId, myId).catch(() => {});
+      supabase
+        .from("chat_messages")
+        .update({ is_read: true })
+        .eq("room_id", activeRoomId)
+        .neq("sender_id", myId)
+        .eq("is_read", false)
+        .then(() => {});
       setUnreadMap((prev) => ({ ...prev, [activeRoomId]: 0 }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoomId]);
 
-  // Realtime subscription for all messages involving current user
+  // Single persistent realtime subscription — uses ref to avoid stale closures
   useEffect(() => {
     if (!myId) return;
     const supabase = createClient();
     const channel = supabase
-      .channel(`chat-${myId}`)
+      .channel(`chat_panel_${myId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_messages" },
         (payload) => {
           const msg = payload.new as Message;
-          const isForMe = msg.room_id.includes(myId);
-          if (!isForMe) return;
 
-          if (msg.room_id === activeRoomId) {
-            setMessages((prev) => [...prev, msg]);
+          // Only care about rooms that include me
+          const parts = msg.room_id.split("_");
+          if (!parts.includes(myId)) return;
+
+          // Dedup: skip if we've already shown this message
+          if (seenMsgIds.current.has(msg.id)) return;
+          seenMsgIds.current.add(msg.id);
+
+          const currentRoomId = activeRoomIdRef.current;
+
+          if (msg.room_id === currentRoomId) {
+            setMessages((prev) => {
+              // Replace a matching temp message if it exists
+              const tempIdx = prev.findIndex(
+                (m) =>
+                  m.id.startsWith("temp-") &&
+                  m.message === msg.message &&
+                  m.sender_id === msg.sender_id &&
+                  m.admin_sender === msg.admin_sender
+              );
+              if (tempIdx !== -1) {
+                const next = [...prev];
+                next[tempIdx] = msg;
+                return next;
+              }
+              return [...prev, msg];
+            });
             scrollToBottom();
-            // mark read immediately
-            if (myId) markChatMessagesRead(msg.room_id, myId).catch(() => {});
+            // mark as read since we're looking at this room
+            supabase
+              .from("chat_messages")
+              .update({ is_read: true })
+              .eq("room_id", msg.room_id)
+              .neq("sender_id", myId)
+              .eq("is_read", false)
+              .then(() => {});
           } else {
-            // bump unread badge
-            setUnreadMap((prev) => ({
-              ...prev,
-              [msg.room_id]: (prev[msg.room_id] ?? 0) + 1,
-            }));
-            setTotalUnread((n) => n + 1);
+            // Bump unread only for messages from the other person
+            const fromOther = isAdmin ? !msg.admin_sender : msg.sender_id !== myId;
+            if (fromOther) {
+              setUnreadMap((prev) => ({
+                ...prev,
+                [msg.room_id]: (prev[msg.room_id] ?? 0) + 1,
+              }));
+            }
           }
         }
       )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myId, activeRoomId]);
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR") {
+          console.error("Chat realtime subscription error");
+        }
+      });
 
-  // Compute total unread on open
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId]); // Only depends on myId — activeRoomId accessed via ref
+
+  // Propagate total unread to parent
   useEffect(() => {
     const total = Object.values(unreadMap).reduce((a, b) => a + b, 0);
-    setTotalUnread(total);
-  }, [unreadMap]);
+    onUnreadChange(total);
+  }, [unreadMap, onUnreadChange]);
+
+  // Reset on close
+  useEffect(() => {
+    if (!open) {
+      setMinimized(false);
+      setSelectedContact(null);
+      setError(null);
+    }
+  }, [open]);
 
   const handleSend = async () => {
     if (!input.trim() || !selectedContact || !myId || sending) return;
     setSending(true);
+    setError(null);
+
     const tempId = `temp-${Date.now()}`;
+    const trimmedMessage = input.trim();
+    const receiverId = selectedContact.id === ADMIN_SENTINEL ? null : selectedContact.id;
+    const roomId = activeRoomId!;
+
+    // Optimistic update
     const tempMsg: Message = {
       id: tempId,
       sender_id: myId,
-      receiver_id: selectedContact.id === ADMIN_SENTINEL ? null : selectedContact.id,
-      room_id: activeRoomId!,
-      message: input.trim(),
+      receiver_id: receiverId,
+      room_id: roomId,
+      message: trimmedMessage,
       is_read: false,
       admin_sender: isAdmin,
       created_at: new Date().toISOString(),
@@ -203,16 +277,40 @@ export function ChatPanel({
     setMessages((prev) => [...prev, tempMsg]);
     setInput("");
     scrollToBottom();
+
     try {
-      await sendChatMessage({
-        sender_id: myId,          // "admin" or therapist UUID
-        receiver_id: selectedContact.id === ADMIN_SENTINEL ? null : selectedContact.id,
-        room_id: activeRoomId!,
-        message: tempMsg.message,
-        admin_sender: isAdmin,
-      });
-    } catch {
+      const supabase = createClient();
+      const { data: inserted, error: insertErr } = await supabase
+        .from("chat_messages")
+        .insert({
+          sender_id: myId,
+          receiver_id: receiverId,
+          room_id: roomId,
+          message: trimmedMessage,
+          admin_sender: isAdmin,
+          is_read: false,
+        })
+        .select()
+        .single();
+
+      if (insertErr) {
+        throw insertErr;
+      }
+
+      if (inserted) {
+        // Mark the real ID as seen so realtime doesn't add a duplicate
+        seenMsgIds.current.add(inserted.id);
+        // Replace temp message with the confirmed one
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? (inserted as Message) : m))
+        );
+      }
+    } catch (err: any) {
+      console.error("Send message failed:", err);
+      setError("Failed to send. " + (err?.message ?? "Please try again."));
+      // Remove the temp message
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      setInput(trimmedMessage); // Restore input so user doesn't lose their message
     } finally {
       setSending(false);
       inputRef.current?.focus();
@@ -226,22 +324,7 @@ export function ChatPanel({
     }
   };
 
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-dark shadow-2xl flex items-center justify-center hover:scale-105 transition-transform cursor-pointer group"
-        aria-label="Open Chat"
-      >
-        <MessageSquare size={22} className="text-white" />
-        {totalUnread > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
-            {totalUnread > 9 ? "9+" : totalUnread}
-          </span>
-        )}
-      </button>
-    );
-  }
+  if (!open) return null;
 
   return (
     <div
@@ -292,7 +375,6 @@ export function ChatPanel({
           {!selectedContact ? (
             /* Contact List */
             <div className="flex flex-col flex-1 overflow-hidden">
-              {/* Search */}
               <div className="px-3 py-2.5 border-b border-[#E8E4DB] shrink-0">
                 <div className="relative">
                   <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9B9B9B]" />
@@ -305,7 +387,6 @@ export function ChatPanel({
                   />
                 </div>
               </div>
-              {/* Contact list */}
               <div className="flex-1 overflow-y-auto">
                 {filtered.length === 0 ? (
                   <div className="py-10 text-center text-xs text-[#9B9B9B]">No contacts found</div>
@@ -318,9 +399,8 @@ export function ChatPanel({
                       <button
                         key={contact.id}
                         onClick={() => {
-                          setSelectedContact(contact as any);
+                          setSelectedContact(contact);
                           setUnreadMap((prev) => ({ ...prev, [roomId]: 0 }));
-                          setTotalUnread((n) => Math.max(0, n - (unreadMap[roomId] ?? 0)));
                         }}
                         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F7F5F0] transition-colors text-left cursor-pointer border-b border-[#F0EDE8] last:border-0"
                       >
@@ -350,15 +430,21 @@ export function ChatPanel({
             <div className="flex flex-col flex-1 overflow-hidden">
               {/* Messages */}
               <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-                {messages.length === 0 && (
+                {messages.length === 0 && !error && (
                   <div className="flex flex-col items-center justify-center h-full text-center py-8">
                     <MessageSquare size={28} className="text-[#D4CFC6] mb-2" />
                     <p className="text-xs text-[#9B9B9B] font-medium">No messages yet</p>
                     <p className="text-[11px] text-[#C4BFB8] mt-0.5">Start the conversation!</p>
                   </div>
                 )}
+                {error && (
+                  <div className="mx-2 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
+                    <p className="text-xs text-red-600">{error}</p>
+                  </div>
+                )}
                 {messages.map((msg, i) => {
                   const isMine = isAdmin ? msg.admin_sender : msg.sender_id === myId;
+                  const isTemp = msg.id.startsWith("temp-");
                   const showTime =
                     i === 0 ||
                     new Date(msg.created_at).getTime() - new Date(messages[i - 1].created_at).getTime() > 300000;
@@ -377,7 +463,7 @@ export function ChatPanel({
                             isMine
                               ? "bg-dark text-white rounded-br-sm"
                               : "bg-[#F0EDE8] text-[#1A1A1A] rounded-bl-sm"
-                          } ${msg.id.startsWith("temp-") ? "opacity-60" : ""}`}
+                          } ${isTemp ? "opacity-60" : ""}`}
                         >
                           {msg.message}
                         </div>
@@ -406,7 +492,11 @@ export function ChatPanel({
                   disabled={!input.trim() || sending}
                   className="w-8 h-8 rounded-xl bg-dark flex items-center justify-center text-white disabled:opacity-30 hover:bg-[#2A2A2A] transition-colors cursor-pointer shrink-0"
                 >
-                  <Send size={14} />
+                  {sending ? (
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <Send size={14} />
+                  )}
                 </button>
               </div>
             </div>

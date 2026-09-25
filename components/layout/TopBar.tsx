@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Search, Bell, ChevronDown, CheckCheck, Calendar, X } from "lucide-react";
+import { Search, Bell, ChevronDown, CheckCheck, Calendar, X, MessageSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -12,6 +12,10 @@ interface TopBarProps {
   role: "admin" | "therapist";
   title?: string;
   name?: string;
+  // Chat control props
+  chatOpen?: boolean;
+  setChatOpen?: (v: boolean) => void;
+  totalUnread?: number;
 }
 
 function getGreeting() {
@@ -42,7 +46,7 @@ function timeAgo(dateStr: string) {
   return `${days}d ago`;
 }
 
-export function TopBar({ userName, role, name }: TopBarProps) {
+export function TopBar({ userName, role, name, chatOpen = false, setChatOpen, totalUnread = 0 }: TopBarProps) {
   let effectiveName = userName || name || (role === "admin" ? "Clinic Admin" : "Dr. Himanshu");
   if (effectiveName.toLowerCase() === "therapist") {
     effectiveName = "Dr. Himanshu";
@@ -265,8 +269,25 @@ export function TopBar({ userName, role, name }: TopBarProps) {
         )}
       </div>
 
-      {/* Right — Notification Bell + Avatar */}
+      {/* Right — Chat + Notification Bell + Avatar */}
       <div className="flex items-center gap-3">
+        {/* Chat Button */}
+        {setChatOpen && (
+          <button
+            onClick={() => setChatOpen(!chatOpen)}
+            className="w-9 h-9 rounded-full bg-[#DDD5C7] border border-[#C8C2B8] flex items-center justify-center hover:bg-[#CFC8BA] transition-colors relative"
+            aria-label="Team Chat"
+            title="Team Chat"
+          >
+            <MessageSquare size={16} className={chatOpen ? "text-accent" : "text-[#4B4B4B]"} />
+            {totalUnread > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-page">
+                {totalUnread > 9 ? "9+" : totalUnread}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Notification Bell */}
         <div ref={notifRef} className="relative">
           <button
@@ -373,13 +394,17 @@ export function TopBar({ userName, role, name }: TopBarProps) {
           )}
         </div>
 
-        {/* Avatar */}
-        <div className="flex items-center gap-2 cursor-default">
-          <div className="w-9 h-9 rounded-full bg-dark flex items-center justify-center text-white text-xs font-semibold shadow-sm">
+        {/* Avatar — click to go to profile */}
+        <Link
+          href={role === "admin" ? "/dashboard/settings" : "/dashboard/profile"}
+          className="flex items-center gap-2 cursor-pointer group"
+          title={role === "admin" ? "Settings" : "My Profile"}
+        >
+          <div className="w-9 h-9 rounded-full bg-dark flex items-center justify-center text-white text-xs font-semibold shadow-sm ring-2 ring-transparent group-hover:ring-accent/40 transition-all">
             {getInitials(effectiveName)}
           </div>
-          <ChevronDown size={14} className="text-[#9B9B9B] hidden sm:block" />
-        </div>
+          <ChevronDown size={14} className="text-[#9B9B9B] hidden sm:block group-hover:text-accent transition-colors" />
+        </Link>
       </div>
     </header>
   );

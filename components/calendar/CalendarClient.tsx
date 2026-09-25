@@ -73,7 +73,9 @@ export function CalendarClient({
       showToast(`Marked as ${status}.`);
       setSelected(null);
       setConfirmAction(null);
-      router.refresh();
+      // NOTE: router.refresh() removed — revalidatePath in the server action
+      // automatically triggers Next.js to re-fetch, so calling refresh() again
+      // was causing a redundant double fetch on every status change.
     } catch {
       showToast("Failed to update status");
     } finally {

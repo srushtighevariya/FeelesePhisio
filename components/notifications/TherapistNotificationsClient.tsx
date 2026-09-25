@@ -32,9 +32,8 @@ export function TherapistNotificationsClient({
   const [list, setList] = useState(initialNotifications);
   const [, start] = useTransition();
 
-  const unreadCount   = list.filter((n) => !n.is_read).length;
-  const apptCount     = list.filter((n) => n.type === "Appointment").length;
-  const reminderCount = list.filter((n) => n.type === "Reminder").length;
+  const unreadCount = list.filter((n) => !n.is_read).length;
+  const apptCount   = list.filter((n) => n.type === "Appointment").length;
 
   useEffect(() => {
     const supabase = createClient();
@@ -77,28 +76,14 @@ export function TherapistNotificationsClient({
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {unreadCount > 0 && (
-              <span className="px-3 py-1 text-xs font-bold bg-accent text-white rounded-pill">
-                {unreadCount} unread
-              </span>
-            )}
             <RefreshCw size={13} className="text-blue-500 animate-pulse" />
             <span className="text-xs text-blue-600 font-medium">Live</span>
           </div>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — Appointment Alerts only */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="card-white p-4 flex items-center gap-3 border border-[#E8E4DB]">
-          <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-600">
-            <Bell size={18} />
-          </div>
-          <div>
-            <p className="text-xl font-bold text-[#1A1A1A]">{unreadCount}</p>
-            <p className="text-xs text-[#9B9B9B]">Unread</p>
-          </div>
-        </div>
         <div className="card-white p-4 flex items-center gap-3 border border-[#E8E4DB]">
           <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600">
             <Calendar size={18} />
@@ -106,15 +91,6 @@ export function TherapistNotificationsClient({
           <div>
             <p className="text-xl font-bold text-[#1A1A1A]">{apptCount}</p>
             <p className="text-xs text-[#9B9B9B]">Appointment Alerts</p>
-          </div>
-        </div>
-        <div className="card-white p-4 flex items-center gap-3 border border-[#E8E4DB]">
-          <div className="w-10 h-10 rounded-xl bg-accent/20 flex items-center justify-center text-accent">
-            <Bell size={18} />
-          </div>
-          <div>
-            <p className="text-xl font-bold text-[#1A1A1A]">{reminderCount}</p>
-            <p className="text-xs text-[#9B9B9B]">Reminders</p>
           </div>
         </div>
       </div>

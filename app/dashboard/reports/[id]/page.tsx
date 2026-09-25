@@ -25,6 +25,11 @@ export default async function PatientReportPage({ params }: Props) {
 
   if (error || !patient) notFound();
 
+  // 12-month rolling window — prevents loading all-time history for tenured patients
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+  const dateWindow = twelveMonthsAgo.toISOString().slice(0, 10);
+
   const [
     { data: rawAssessments },
     { data: rawPlans },
@@ -33,7 +38,7 @@ export default async function PatientReportPage({ params }: Props) {
   ] = await Promise.all([
     supabase.from("assessments").select("*").eq("patient_id", id).order("created_at"),
     supabase.from("treatment_plans").select("*").eq("patient_id", id).order("created_at"),
-    supabase.from("sessions").select("*").eq("patient_id", id).order("date"),
+    supabase.from("sessions").select("*").eq("patient_id", id).gte("date", dateWindow).order("date"),
     supabase.from("appointments").select("date, time, status, type").eq("patient_id", id).order("date", { ascending: false }).limit(5),
   ]);
 

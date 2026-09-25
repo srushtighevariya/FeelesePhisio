@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCachedAuthUser } from "@/lib/auth-cache";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { TopBar } from "@/components/layout/TopBar";
-import { ChatPanel } from "@/components/layout/ChatPanel";
+import { DashboardShell } from "@/components/layout/DashboardShell";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -33,24 +32,17 @@ export default async function DashboardLayout({
       {/* Sidebar */}
       <Sidebar role={role} name={userName} />
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden print:block print:overflow-visible min-w-0">
-        <TopBar userName={userName} role={role} />
-        <main className="flex-1 overflow-y-auto p-6 lg:p-8 print:overflow-visible print:p-0">
-          <div className="max-w-7xl mx-auto">
-            {children}
-          </div>
-        </main>
-      </div>
-
-      {/* Chat Panel — floating */}
-      <ChatPanel
+      {/* Main content + TopBar + Chat — all managed by DashboardShell */}
+      <DashboardShell
+        userName={userName}
+        role={role}
         currentTherapistId={currentTherapistId}
         currentUserId={auth.user.id}
         isAdmin={isAdmin}
         therapists={therapists ?? []}
-        currentUserName={userName}
-      />
+      >
+        {children}
+      </DashboardShell>
     </div>
   );
 }
