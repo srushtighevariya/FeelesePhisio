@@ -1,7 +1,16 @@
 "use server";
 
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createBrowserClient } from "@supabase/ssr";
 import { revalidatePath } from "next/cache";
+import { Client } from "pg";
+
+async function getDbClient() {
+  const dbUrl = process.env.DATABASE_URL!;
+  const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+  return client;
+}
 
 
 export async function getTherapists() {
@@ -34,7 +43,7 @@ export async function addTherapist(form: {
   if (email && password) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-    const supabaseAnonClient = createAnonClient(supabaseUrl, supabaseAnon);
+    const supabaseAnonClient = createBrowserClient(supabaseUrl, supabaseAnon);
 
     // 1. Sign up user through Supabase Auth
     const { data: authData, error: authErr } = await supabaseAnonClient.auth.signUp({

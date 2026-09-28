@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { syncAutoMissedAppointments, syncDayOfReminders } from "@/lib/actions/appointments";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/sync
  * Background sync endpoint. The dashboard fires a fire-and-forget fetch to
